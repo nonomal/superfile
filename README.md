@@ -1,55 +1,105 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="/asset/superfilelogowhite.png" />
-  <source media="(prefers-color-scheme: light)" srcset="/asset/superfilelogoblack.png" />
-  <img alt="superfile LOGO" src="/asset/superfilelogowhite.png" />
-</picture>
+<h4>superfile is supported by the community.</h4>
 
-![](/asset/demo.png)
+<a href="https://ko-fi.com/yorukot">
+  <img alt="Donate to superfile on Ko-fi" src="https://ko-fi.com/img/githubbutton_sm.svg">
+</a>
+
+<hr>
+
+</div>
+
+<div align="center">
+<br>
+<picture>
+  <source width="300" media="(prefers-color-scheme: dark)" srcset="website/src/assets/superfile-night.svg" />
+  <source width="300" media="(prefers-color-scheme: light)" srcset="website/src/assets/superfile-day.svg" />
+  <img alt="superfile LOGO" src="website/src/assets/superfile-day.svg" />
+</picture>
+<br><br>
+
+[![License MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/yorukot/superfile/refs/heads/main/LICENSE) [![Discord Link](https://img.shields.io/discord/1338415256875307110?label=discord&logo=discord&logoColor=white)](https://discord.gg/YYtJ23Du7B) [![Release](https://img.shields.io/github/v/release/yorukot/superfile.svg?style=flat-square)](https://github.com/yorukot/superfile/releases/latest) ![Homebrew downloads](https://img.shields.io/homebrew/installs/dy/superfile?label=Homebrew) ![GitHub downloads](https://img.shields.io/github/downloads/yorukot/superfile/total?label=GitHub%20downloads%20assets%2Freleases) [![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/yorukot/superfile?utm_source=oss&utm_medium=github&utm_campaign=yorukot%2Fsuperfile&labelColor=171717&color=FF570A&&label=CodeRabbit+Reviews)](https://www.coderabbit.ai/)
+
+![](website/src/assets/demo.png)
 
 </div>
 
 ## Demo
 
-| Perform common operations |
-| ------------------------- |
-| ![](/asset/demo.gif)      |
+| Perform common operations  |
+| -------------------------- |
+| ![](asset/readme/demo.gif) |
 
 ## Content
 
+- [Demo](#demo)
+- [Content](#content)
 - [Installation](#installation)
+  - [macOS and Linux](#macos-and-linux)
+  - [Windows](#windows)
+    - [Powershell](#powershell)
+    - [Winget](#winget)
+    - [Scoop](#scoop)
+  - [More installation methods](#more-installation-methods)
 - [Build](#build)
+  - [For macOS/Linux](#for-macoslinux)
+  - [For Windows](#for-windows)
+- [Start superfile](#start-superfile)
 - [Supported Systems](#supported-systems)
 - [Tutorial](#tutorial)
 - [Plugins](#plugins)
 - [Themes](#themes)
 - [Hotkeys](#hotkeys)
-- [Contributing](#contributing)
+- [Notes](#notes)
 - [Troubleshooting](#troubleshooting)
+- [Uninstalling](#uninstalling)
+  - [macOS and Linux](#macos-and-linux-1)
+  - [Windows](#windows)
+- [Contributing](#contributing)
 - [Thanks](#thanks)
-  - [Support](#Support)
+  - [Support](#support)
+  - [Core maintainer](#core-maintainer)
   - [Contributors](#contributors)
+  - [Powered by](#powered-by)
   - [Star History](#star-history)
+- [༼ つ ◕\_◕ ༽つ Please share.](#-つ-_-つ-please-share)
 
 ## Installation
 
-### Quick install 
-
-Using bash (Support MacOS and linux)
+### macOS and Linux
 
 ```bash
-bash -c "$(curl -sLo- https://superfile.netlify.app/install.sh)"
+bash -c "$(curl -sLo- https://superfile.dev/install.sh)"
 ```
 
-Using powershell (Support Windows)
+If you want to inspect the script, see : [install.sh](./website/public/install.sh)
+
+### Windows
+
+#### Powershell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.netlify.app/install.ps1'))"
+powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.dev/install.ps1'))"
+```
+
+If you want to inspect the script, see : [install.ps1](./website/public/install.ps1)
+
+#### [Winget](https://winget.run/)
+
+```powershell
+winget install --id yorukot.superfile
+```
+
+#### [Scoop](https://scoop.sh/)
+
+```
+scoop install superfile
 ```
 
 ### More installation methods
-[Click me to check on how to install](https://superfile.netlify.app/getting-started/installation/)
+
+[Click me to check on how to install](https://superfile.dev/getting-started/installation/)
 
 ## Build
 
@@ -73,6 +123,8 @@ Enter the downloaded directory:
 cd superfile
 ```
 
+### For macOS/Linux
+
 Run the `build.sh` file:
 
 ```bash
@@ -85,65 +137,77 @@ Add the binary file to your $PATH, e.g., in `/usr/local/bin`:
 sudo mv ./bin/spf /usr/local/bin
 ```
 
+### For Windows
+
+```bash
+go build -o bin/spf.exe
+```
+
+Edit System Environment Variables and add superfile repo's `bin` directory to your PATH
+
+## Start superfile
+
+```bash
+spf
+```
+
 ## Supported Systems
 
 - \[x\] Linux
-- \[x\] MacOS
+- \[x\] macOS
 - \[x\] Windows (Not fully supported yet)
 
 ## Tutorial
 
-After you install superfile, you can go [here](https://superfile.netlify.app/getting-started/tutorial/) to briefly understand how to use superfile!
+After you install superfile, you can go [here](https://superfile.dev/getting-started/tutorial/) to briefly understand how to use superfile!
 
 ## Plugins
 
-[Click me to the plugins wiki](https://superfile.netlify.app/list/plugin-list/)
+[Click me to the plugins wiki](https://superfile.dev/list/plugin-list/)
 
 ## Themes
 
-[Click me to the theme wiki](https://superfile.netlify.app/configure/custom-theme/)
+[Click me to the theme wiki](https://superfile.dev/configure/custom-theme/)
 
 ## Hotkeys
 
-> [!WARNING]
-> If you are vim/nvim user please change your default hotkeys config to vim version!
+> [!WARNING] If you are vim/nvim user please change your default hotkeys config to vim version!
 
-[**Click me to see the hotkey wiki**](https://superfile.netlify.app/configure/custom-hotkeys/)
+[**Click me to see the hotkey wiki**](https://superfile.dev/configure/custom-hotkeys/)
+
+## Notes
+
+We have an auto update functionality, that fetches superfile's latest released version from github (if last timestamp of last version check was less than 24 hours) and prints a prompt to user, if there is a newer version available.
+
+You can turn this off, by setting `auto_check_update` to false in superfile config. [**Click me to see the config wiki**](https://superfile.dev/configure/superfile-config/)
 
 ## Troubleshooting
 
-[**Click me to see common problem fix**](https://superfile.netlify.app/troubleshooting/)
+[**Click me to see common problem fix**](https://superfile.dev/troubleshooting/)
 
 ## Uninstalling
 
-### MacOS and Linux
-
-On MacOS and Linux, you can uninstall superfile by simply removing the binary. If you installed superfile with sudo, run
+### macOS and Linux
 
 ```bash
-sudo rm /usr/local/bin/spf
+bash -c "$(curl -sLo- https://superfile.dev/uninstall.sh)"
 ```
 
-If you installed superfile without sudo, run
+If you want to inspect the script, see : [uninstall.sh](./website/public/uninstall.sh)
 
-```bash
-rm ~/.local/bin/spf
-```
-
-If you don't rember, just try removing both.
-
-
-### Window
+### Windows
 
 To uninstall superfile on Windows, use this powershell script.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.netlify.app/uninstall.ps1'))"
+powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.dev/uninstall.ps1'))"
 ```
 
 ## Contributing
 
 If you want to contribute please follow the [contribution guide](./CONTRIBUTING.md)
+
+[**Click me to see changelog**](https://superfile.dev/changelog)
 
 ## Thanks
 
@@ -154,30 +218,41 @@ If you want to contribute please follow the [contribution guide](./CONTRIBUTING.
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G1JEGGC)
 
+### Core maintainer
+
+> We welcome anyone who wants to become a core maintainer. Feel free to reach out!
+
+- **[@yorukot](https://github.com/yorukot)** - Original author and maintainer
+- **[@lazysegtree](https://github.com/lazysegtree)** - Core maintainer
+
 ### Contributors
 
 **Thanks to all the contributors for making this project even greater!**
 
 <a href="https://github.com/yorukot/superfile/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=yorukot/superfile" />
+  <img src="https://gthanks.yorukot.me/image?target=yorukot%2Fsuperfile" />
 </a>
+
+### Powered by
+
+<a href="https://jb.gg/OpenSource"><img alt="JetBrains logo" align="right" width="200" src="https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg"></a>
+
+Thanks to JetBrains team for providing open-source licenses to support the maintenance of superfile.
 
 ### Star History
 
-**THANKS FOR All OF YOUR STARS!**
-Your stars are my motivation to keep updating!
+**THANKS FOR All OF YOUR STARS!** Your stars are my motivation to keep updating!
 
-<a href="https://star-history.com/#yorukot/superfile&Timeline">
+<a href="https://www.star-history.com/?repos=yorukot%2Fsuperfile&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=yorukot/superfile&type=date&theme=dark&legend=top-left&sealed_token=nEoMOYsfp1zwZ7rT-Fm6VR2yTa6cwW35VR0BwVxTuE8Dt17vRcRIQUFXeWdh6lZixlAl5e_fIVFs2Xe4cRdvAnexR5Q6JqlGVZK05Iu0mko8gYLjTdjq0g" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=yorukot/superfile&type=date&legend=top-left&sealed_token=nEoMOYsfp1zwZ7rT-Fm6VR2yTa6cwW35VR0BwVxTuE8Dt17vRcRIQUFXeWdh6lZixlAl5e_fIVFs2Xe4cRdvAnexR5Q6JqlGVZK05Iu0mko8gYLjTdjq0g" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=yorukot/superfile&type=date&legend=top-left&sealed_token=nEoMOYsfp1zwZ7rT-Fm6VR2yTa6cwW35VR0BwVxTuE8Dt17vRcRIQUFXeWdh6lZixlAl5e_fIVFs2Xe4cRdvAnexR5Q6JqlGVZK05Iu0mko8gYLjTdjq0g" />
  </picture>
 </a>
 
-
 <div align="center">
 
-## ༼ つ ◕_◕ ༽つ  Please share.
+## ༼ つ ◕_◕ ༽つ Please share.
 
 </div>

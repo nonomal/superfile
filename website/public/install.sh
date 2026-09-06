@@ -38,16 +38,33 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+fetch_latest_version() {
+    local response
+    if response=$(curl -s --max-time 5 "https://api.github.com/repos/yorukot/superfile/releases/latest"); then
+        local version
+        version=$(echo "$response" | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+        if [ -n "$version" ]; then
+            echo "$version"
+        else
+            echo -e "${red}❌ Failed to parse version from GitHub API${nc}" >&2
+            exit 1
+        fi
+    else
+        echo -e "${red}❌ Failed to fetch latest version from GitHub API${nc}" >&2
+        exit 1
+    fi
+}
+
 package=superfile
-version=1.1.4
+version=${SPF_INSTALL_VERSION:-$(fetch_latest_version)}
 arch=$(uname -m)
 os=$(uname -s)
 
 cd "${temp_dir}"
 
-if [[ "$arch" == "x86_64" ]]; then
+if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
     arch="amd64"
-elif [[ "$arch" == "arm"* ]]; then
+elif [[ "$arch" == "arm"* || "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
     arch="arm64"
 else
     echo -e "${red}❌ Fail install superfile: ${yellow}Unsupported architecture${nc}"

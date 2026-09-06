@@ -1,608 +1,517 @@
 package internal
 
 import (
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	variable "github.com/yorukot/superfile/src/config"
+	"github.com/yorukot/superfile/src/internal/trash"
+	"github.com/yorukot/superfile/src/internal/ui/filepanel"
+	"github.com/yorukot/superfile/src/internal/ui/spferror"
+	"github.com/yorukot/superfile/src/pkg/utils"
+
+	"github.com/yorukot/superfile/src/internal/common"
+	"github.com/yorukot/superfile/src/internal/ui/notify"
+	"github.com/yorukot/superfile/src/internal/ui/processbar"
+
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/lithammer/shortuuid"
-	"github.com/yorukot/superfile/src/config/icon"
 )
 
+// Processes any standard (f.e. deletion) operation with a list of files
+func (m *model) runFileProcessor(processor processbar.FileListProcessor,
+	finalizer processbar.ProcessFinalizer,
+	items []string,
+	reqID int,
+) tea.Msg {
+	slog.Debug("Lock mutex for modal error window")
+	m.mutexErrorModal.Lock()
+	result, toDo := processor(items)
+	if result.State == processbar.Failed && len(toDo) > 0 {
+		// we unlock mutexErrorModal on dispatch SpfErrorModalUpdateMsg
+		errorModel := spferror.New(true,
+			"Error",
+			result.ErrorMsg, spferror.NewFileListError(toDo, processor, finalizer))
+		return NewSpfErrorModalMsg(errorModel, reqID)
+	}
+	slog.Debug("Unlock mutex for modal error window")
+	m.mutexErrorModal.Unlock()
+	return finalizer(result.State, reqID)
+}
+
+func markProcessDone(process processbar.Process, processBarModel *processbar.Model) {
+	process.DoneTime = time.Now()
+	err := processBarModel.SendUpdateProcessMsg(process, true)
+	if err != nil {
+		slog.Error("Failed to send final delete operation update", "error", err)
+	}
+}
+
+func formatFileError(filePath string, err error) string {
+	var e *os.LinkError
+	if errors.As(err, &e) {
+		return fmt.Sprintf("Deleting %s: \n%s", filePath, e.Err.Error())
+	}
+	return err.Error()
+}
+
 // Create a file in the currently focus file panel
+// TODO: Fix it. It doesn't creates a new file. It just opens a file model,
+// that allows you to create a file. Actual creation happens here - createItem() in handle_modal.go
 func (m *model) panelCreateNewFile() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	ti := textinput.New()
-	ti.Cursor.Style = modalCursorStyle
-	ti.Cursor.TextStyle = modalStyle
-	ti.TextStyle = modalStyle
-	ti.Cursor.Blink = true
-	ti.Placeholder = "Add \"/\" represent Transcend folder at the end"
-	ti.PlaceholderStyle = modalStyle
-	ti.Focus()
-	ti.CharLimit = 156
-	ti.Width = modalWidth - 10
+	panel := m.getFocusedFilePanel()
 
-	m.typingModal.location = panel.location
+	m.typingModal.location = panel.Location
 	m.typingModal.open = true
-	m.typingModal.textInput = ti
+	m.typingModal.textInput = common.GenerateNewFileTextInput()
 	m.firstTextInput = true
+}
 
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+// TODO : This function does not needs the entire model. Only pass the panel object
+func (m *model) IsRenamingConflicting() bool {
+	// TODO : Replace this with m.getCurrentFilePanel() everywhere
+	panel := m.getFocusedFilePanel()
+	if panel.ElemCount() == 0 {
+		slog.Error("IsRenamingConflicting() being called on empty panel")
+		return false
+	}
+	oldPath := panel.GetFocusedItem().Location
+	newPath := filepath.Join(panel.Location, panel.Rename.Value())
 
+	if oldPath == newPath {
+		return false
+	}
+
+	_, err := os.Stat(newPath)
+	return err == nil
+}
+
+// TODO: Remove channel messaging and use tea.Cmd
+func (m *model) warnModalForRenaming() tea.Cmd {
+	reqID := m.nextIoReqCnt()
+	slog.Debug("Submitting rename notify model request", "reqID", reqID)
+	res := func() tea.Msg {
+		notifyModel := notify.New(true,
+			common.SameRenameWarnTitle,
+			common.SameRenameWarnContent,
+			notify.RenameAction)
+		return NewNotifyModalMsg(notifyModel, reqID)
+	}
+	return res
 }
 
 // Rename file where the cusror is located
+// TODO: Fix this. It doesn't do any rename, just opens the rename text input
+// Actual rename happens at confirmRename() in handle_modal.go
 func (m *model) panelItemRename() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	if len(panel.element) == 0 {
+	panel := m.getFocusedFilePanel()
+	if panel.Empty() {
 		return
 	}
-	ti := textinput.New()
-	ti.Cursor.Style = filePanelCursorStyle
-	ti.Cursor.TextStyle = filePanelStyle
-	ti.Prompt = filePanelCursorStyle.Render(icon.Cursor + " ")
-	ti.TextStyle = modalStyle
-	ti.Cursor.Blink = true
-	ti.Placeholder = "New name"
-	ti.PlaceholderStyle = modalStyle
-	ti.SetValue(panel.element[panel.cursor].name)
-	ti.Focus()
-	ti.CharLimit = 156
-	ti.Width = m.fileModel.width - 4
 
-	m.fileModel.renaming = true
-	panel.renaming = true
+	cursorPos := -1
+	nameRunes := []rune(panel.GetFocusedItem().Name)
+	nameLen := len(nameRunes)
+	for i := nameLen - 1; i >= 0; i-- {
+		if nameRunes[i] == '.' {
+			cursorPos = i
+			break
+		}
+	}
+	if cursorPos == -1 || cursorPos == 0 && nameLen > 0 || panel.GetFocusedItem().Directory {
+		cursorPos = nameLen
+	}
+
+	m.fileModel.Renaming = true
+	panel.Renaming = true
 	m.firstTextInput = true
-	panel.rename = ti
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	// TODO: Don't re-create a new model on each rename. Don't create
+	// unnecessary gargage for collection. Reuse the existing model.
+	// Maintain its state, dimensions. Update its cursor and text when needed
+	panel.Rename = common.GenerateRenameTextInput(
+		m.fileModel.SinglePanelWidth-common.InnerPadding,
+		cursorPos,
+		panel.GetFocusedItem().Name)
 }
 
-func (m *model) deleteItemWarn() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	if !((panel.panelMode == selectMode && len(panel.selected) != 0) || (panel.panelMode == browserMode)) {
-		return
-	}
-	id := shortuuid.New()
-	message := channelMessage{
-		messageId:   id,
-		messageType: snedWarnModal,
+func (m *model) getDeleteCmd(permDelete bool) tea.Cmd {
+	panel := m.getFocusedFilePanel()
+	if panel.Empty() {
+		return nil
 	}
 
-	if isExternalDiskPath(panel.location) {
-		message.warnModal = warnModal{
-			open:     true,
-			title:    "Are you sure you want to completely delete",
-			content:  "This operation cannot be undone and your data will be completely lost.",
-			warnType: confirmDeleteItem,
-		}
-		channel <- message
-		return
+	var items []string
+	if panel.PanelMode == filepanel.SelectMode {
+		items = panel.GetSelectedLocationsSortedAsVisible()
 	} else {
-		message.warnModal = warnModal{
-			open:     true,
-			title:    "Are you sure you want to move this to trash can",
-			content:  "This operation will move file or directory to trash can.",
-			warnType: confirmDeleteItem,
-		}
-		channel <- message
-		return
+		items = []string{panel.GetFocusedItem().Location}
+	}
+
+	useTrash := m.hasTrash && trash.Available(panel.Location) && !permDelete
+
+	reqID := m.nextIoReqCnt()
+	slog.Debug("Submitting delete request", "id", reqID, "items cnt", len(items))
+	return func() tea.Msg {
+		return m.deleteOperation(&m.processBarModel, items, useTrash, reqID)
 	}
 }
 
-// Move file or directory to the trash can
-func (m *model) deleteSingleItem() {
-	id := shortuuid.New()
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-
-	if len(panel.element) == 0 {
-		return
+func (m *model) deleteOperation(processBarModel *processbar.Model, items []string, useTrash bool, reqID int) tea.Msg {
+	if len(items) == 0 {
+		return NewDeleteOperationMsg(processbar.Cancelled, reqID)
 	}
-
-	prog := progress.New(generateGradientColor())
-	prog.PercentageStyle = footerStyle
-
-	newProcess := process{
-		name:     icon.Delete + icon.Space + panel.element[panel.cursor].name,
-		progress: prog,
-		state:    inOperation,
-		total:    1,
-		done:     0,
-	}
-	m.processBarModel.process[id] = newProcess
-
-	message := channelMessage{
-		messageId:       id,
-		messageType:     sendProcess,
-		processNewState: newProcess,
-	}
-
-	channel <- message
-	err := trashMacOrLinux(panel.element[panel.cursor].location)
-
+	p, err := processBarModel.SendAddProcessMsg(filepath.Base(items[0]), processbar.OpDelete, len(items), true)
 	if err != nil {
-		p := m.processBarModel.process[id]
-		p.state = failure
-		message.processNewState = p
-		channel <- message
-	} else {
-		p := m.processBarModel.process[id]
-		p.done = 1
-		p.state = successful
-		p.doneTime = time.Now()
-		message.processNewState = p
-		channel <- message
+		slog.Error("Cannot spawn a new process", "error", err)
+		return NewDeleteOperationMsg(processbar.Failed, reqID)
 	}
-	if panel.cursor == len(panel.element)-1 {
-		panel.cursor--
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	finalizer := func(state processbar.ProcessState, reqID int) tea.Msg { return NewDeleteOperationMsg(state, reqID) }
+	processor := makeDeleteProcessor(p, processBarModel, useTrash)
+	msg := m.runFileProcessor(processor, finalizer, items, reqID)
+	return msg
 }
 
-// Move file or directory to the trash can
-func (m model) deleteMultipleItems() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	if len(panel.selected) != 0 {
-		id := shortuuid.New()
-		prog := progress.New(generateGradientColor())
-		prog.PercentageStyle = footerStyle
-
-		newProcess := process{
-			name:     icon.Delete + icon.Space + filepath.Base(panel.selected[0]),
-			progress: prog,
-			state:    inOperation,
-			total:    len(panel.selected),
-			done:     0,
+func makeDeleteProcessor(process processbar.Process,
+	processBarModel *processbar.Model,
+	useTrash bool) processbar.FileListProcessor {
+	processorFunction := func(items []string) (processbar.Process, []string) {
+		notProcessed := make([]string, 0)
+		if len(items) == 0 {
+			markProcessDone(process, processBarModel)
+			return process, notProcessed
 		}
-
-		m.processBarModel.process[id] = newProcess
-
-		message := channelMessage{
-			messageId:       id,
-			messageType:     sendProcess,
-			processNewState: newProcess,
-		}
-
-		channel <- message
-
-		for _, filePath := range panel.selected {
-
-			p := m.processBarModel.process[id]
-			p.name = icon.Delete + icon.Space + filepath.Base(filePath)
-			p.done++
-			p.state = inOperation
-			if len(channel) < 5 {
-				message.processNewState = p
-				channel <- message
+		deleteFunc := os.RemoveAll
+		if useTrash {
+			deleteFunc = func(item string) error {
+				_, err := trash.Move(item)
+				return err
 			}
-			err := trashMacOrLinux(filePath)
-
+		}
+		for i, item := range items {
+			err := deleteFunc(item)
 			if err != nil {
-				p.state = failure
-				message.processNewState = p
-				channel <- message
-				outPutLog("Delete multiple item function error", err)
-				m.processBarModel.process[id] = p
+				process.State = processbar.Failed
+				slog.Error("Error in delete operation", "item", item, "useTrash", useTrash, "error", err)
+				process.ErrorMsg = formatFileError(item, err)
+				notProcessed = items[i:]
 				break
-			} else {
-				if p.done == p.total {
-					p.state = successful
-					message.processNewState = p
-					channel <- message
-				}
-				m.processBarModel.process[id] = p
 			}
+			process.CurrentFile = filepath.Base(item)
+			process.Done++
+			processBarModel.TrySendingUpdateProcessMsg(process)
 		}
-	}
 
-	if panel.cursor >= len(panel.element)-len(panel.selected)-1 {
-		panel.cursor = len(panel.element) - len(panel.selected) - 1
-		if panel.cursor < 0 {
-			panel.cursor = 0
+		if process.State != processbar.Failed {
+			process.State = processbar.Successful
+			markProcessDone(process, processBarModel)
 		}
+		return process, notProcessed
 	}
-	panel.selected = panel.selected[:0]
+	return processorFunction
 }
 
-// Completely delete file or folder (Not move to the trash can)
-func (m *model) completelyDeleteSingleItem() {
-	id := shortuuid.New()
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
+func (m *model) getDeleteTriggerCmd(deletePermanent bool) tea.Cmd {
+	panel := m.getFocusedFilePanel()
+	if (panel.PanelMode == filepanel.SelectMode && panel.SelectedCount() == 0) ||
+		(panel.PanelMode == filepanel.BrowserMode && panel.Empty()) {
+		return nil
+	}
 
-	if len(panel.element) == 0 {
+	reqID := m.nextIoReqCnt()
+
+	return func() tea.Msg {
+		title := common.TrashWarnTitle
+		content := common.TrashWarnContent
+		action := notify.DeleteAction
+
+		if !m.hasTrash || !trash.Available(panel.Location) || deletePermanent {
+			title = common.PermanentDeleteWarnTitle
+			content = common.PermanentDeleteWarnContent
+			action = notify.PermanentDeleteAction
+		}
+		return NewNotifyModalMsg(notify.New(true, title, content, action), reqID)
+	}
+}
+
+// Copy directory or file's path to superfile's clipboard
+// set cut to true/false accordingly
+func (m *model) copySingleItem(cut bool) {
+	panel := m.getFocusedFilePanel()
+	m.clipboard.Reset(cut)
+	if panel.Empty() {
 		return
 	}
-
-	prog := progress.New(generateGradientColor())
-	prog.PercentageStyle = footerStyle
-
-	newProcess := process{
-		name:     "󰆴 " + panel.element[panel.cursor].name,
-		progress: prog,
-		state:    inOperation,
-		total:    1,
-		done:     0,
-	}
-	m.processBarModel.process[id] = newProcess
-
-	message := channelMessage{
-		messageId:       id,
-		messageType:     sendProcess,
-		processNewState: newProcess,
-	}
-
-	channel <- message
-
-	err := os.RemoveAll(panel.element[panel.cursor].location)
-	if err != nil {
-		outPutLog("Completely delete single item function remove file error", err)
-	}
-
-	if err != nil {
-		p := m.processBarModel.process[id]
-		p.state = failure
-		message.processNewState = p
-		channel <- message
-	} else {
-		p := m.processBarModel.process[id]
-		p.done = 1
-		p.state = successful
-		p.doneTime = time.Now()
-		message.processNewState = p
-		channel <- message
-	}
-	if panel.cursor == len(panel.element)-1 {
-		panel.cursor--
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	slog.Debug("handle_file_operations.copySingleItem", "cut", cut,
+		"panel location", panel.GetFocusedItem().Location)
+	m.clipboard.Add(panel.GetFocusedItem().Location)
 }
 
-// Completely delete all file or folder from clipboard (Not move to the trash can)
-func (m model) completelyDeleteMultipleItems() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	if len(panel.selected) != 0 {
-		id := shortuuid.New()
-		prog := progress.New(generateGradientColor())
-		prog.PercentageStyle = footerStyle
+// Copy all selected file or directory's paths to the clipboard
+func (m *model) copyMultipleItem(cut bool) {
+	panel := m.getFocusedFilePanel()
+	m.clipboard.Reset(cut)
+	if panel.SelectedCount() == 0 {
+		return
+	}
+	items := panel.GetSelectedLocationsSortedAsVisible()
+	slog.Debug("handle_file_operations.copyMultipleItem", "cut", cut,
+		"panel selected files", items)
+	m.clipboard.SetItems(items)
+}
 
-		newProcess := process{
-			name:     icon.Delete + icon.Space + filepath.Base(panel.selected[0]),
-			progress: prog,
-			state:    inOperation,
-			total:    len(panel.selected),
-			done:     0,
+func (m *model) getPasteItemCmd() tea.Cmd {
+	copyItems := m.clipboard.PruneInaccessibleItemsAndGet()
+	cut := m.clipboard.IsCut()
+	if len(copyItems) == 0 {
+		return nil
+	}
+
+	reqID := m.nextIoReqCnt()
+	panelLocation := m.getFocusedFilePanel().Location
+
+	slog.Debug("Submitting pasteItems request", "id", reqID, "items cnt", len(copyItems), "dest", panelLocation)
+	return func() tea.Msg {
+		err := validatePasteOperation(panelLocation, copyItems, cut)
+		if err != nil {
+			return NewNotifyModalMsg(notify.New(true, "Invalid paste location", err.Error(), notify.NoAction),
+				reqID)
+		}
+		return m.executePasteOperation(&m.processBarModel, panelLocation, copyItems, cut, reqID)
+	}
+}
+
+func validatePasteOperation(panelLocation string, copyItems []string, cut bool) error {
+	// Check if trying to paste into source or subdirectory for both cut and copy operations
+	for _, srcPath := range copyItems {
+		// Check if trying to cut and paste into the same directory - this would be a no-op
+		// and could potentially cause issues, so we prevent it
+		if filepath.Dir(srcPath) == panelLocation && cut {
+			return fmt.Errorf("cannot paste into parent directory of source, srcPath : %v, panelLocation : %v",
+				srcPath, panelLocation)
+		}
+		if cut && srcPath == panelLocation {
+			return errors.New("cannot paste a directory into itself")
 		}
 
-		m.processBarModel.process[id] = newProcess
-
-		message := channelMessage{
-			messageId:       id,
-			messageType:     sendProcess,
-			processNewState: newProcess,
+		if isAncestor(srcPath, panelLocation) {
+			return fmt.Errorf("cannot %s and paste a directory into itself or its subdirectory",
+				getCopyOrCutOperationName(cut))
 		}
+	}
 
-		channel <- message
-		for _, filePath := range panel.selected {
+	return nil
+}
 
-			p := m.processBarModel.process[id]
-			p.name = icon.Delete + icon.Space + filepath.Base(filePath)
-			p.done++
-			p.state = inOperation
-			if len(channel) < 5 {
-				message.processNewState = p
-				channel <- message
+func makePasteProcessor(process processbar.Process,
+	processBarModel *processbar.Model,
+	panelLocation string, cut bool,
+) processbar.FileListProcessor {
+	processorFunction := func(items []string) (processbar.Process, []string) {
+		notProcessed := make([]string, 0)
+		if len(items) == 0 {
+			markProcessDone(process, processBarModel)
+			return process, notProcessed
+		}
+		var err error
+		for i, filePath := range items {
+			errMessage := "cut item error"
+			if cut && !isExternalDiskPath(filePath) {
+				err = moveElement(filePath, filepath.Join(panelLocation, filepath.Base(filePath)))
+			} else {
+				// TODO : These error cases are hard to test. We have to somehow make the paste operations fail,
+				// which is time consuming and manual. We should test these with automated testcases
+				// UPD: use "chattr +i" for target catalog to fail past opeations
+				err = pasteDir(filePath, filepath.Join(panelLocation, filepath.Base(filePath)),
+					&process, cut, processBarModel)
+				if err != nil {
+					errMessage = "paste item error"
+				}
 			}
-			err := os.RemoveAll(filePath)
-			if err != nil {
-				outPutLog("Completely delete multiple item function remove file error", err)
-			}
 
+			process.CurrentFile = filepath.Base(filePath)
 			if err != nil {
-				p.state = failure
-				message.processNewState = p
-				channel <- message
-				outPutLog("Completely delete multiple item function error", err)
-				m.processBarModel.process[id] = p
+				process.State = processbar.Failed
+				slog.Error(errMessage, "error", err)
+				slog.Debug("model.pasteItem - paste failure", "error", err,
+					"current item", filePath, "errMessage", errMessage)
+				process.ErrorMsg = formatFileError(filePath, err)
+				notProcessed = items[i:]
 				break
-			} else {
-				if p.done == p.total {
-					p.state = successful
-					message.processNewState = p
-					channel <- message
-				}
-				m.processBarModel.process[id] = p
 			}
+			processBarModel.TrySendingUpdateProcessMsg(process)
 		}
-	}
-
-	if panel.cursor >= len(panel.element)-len(panel.selected)-1 {
-		panel.cursor = len(panel.element) - len(panel.selected) - 1
-		if panel.cursor < 0 {
-			panel.cursor = 0
+		if process.State != processbar.Failed {
+			process.State = processbar.Successful
+			process.Done = process.Total
+			markProcessDone(process, processBarModel)
 		}
+		return process, notProcessed
 	}
-	panel.selected = panel.selected[:0]
+	return processorFunction
 }
 
-// Copy directory or file
-func (m *model) copySingleItem() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	m.copyItems.cut = false
-	m.copyItems.items = m.copyItems.items[:0]
-	if len(panel.element) == 0 {
-		return
+func (m *model) executePasteOperation(processBarModel *processbar.Model,
+	panelLocation string, items []string, cut bool, reqID int,
+) tea.Msg {
+	if len(items) == 0 {
+		return NewPasteOperationMsg(processbar.Cancelled, reqID)
 	}
-	m.copyItems.items = append(m.copyItems.items, panel.element[panel.cursor].location)
-	fileInfo, err := os.Stat(panel.element[panel.cursor].location)
-	if os.IsNotExist(err) {
-		m.copyItems.items = m.copyItems.items[:0]
-		return
+	var operation processbar.OperationType
+	if cut {
+		operation = processbar.OpCut
+	} else {
+		operation = processbar.OpCopy
 	}
+
+	p, err := processBarModel.SendAddProcessMsg(
+		filepath.Base(items[0]),
+		operation,
+		getTotalFilesCnt(items), true)
 	if err != nil {
-		outPutLog("Copy single item get file state error", panel.element[panel.cursor].location, err)
+		slog.Error("Cannot spawn a new process", "error", err)
+		return NewPasteOperationMsg(processbar.Failed, reqID)
 	}
-
-	if !fileInfo.IsDir() && float64(fileInfo.Size())/(1024*1024) < 250 {
-		fileContent, err := os.ReadFile(panel.element[panel.cursor].location)
-
-		if err != nil {
-			outPutLog("Copy single item read file error", panel.element[panel.cursor].location, err)
-		}
-
-		if err := clipboard.WriteAll(string(fileContent)); err != nil {
-			outPutLog("Copy single item write file error", panel.element[panel.cursor].location, err)
-		}
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	finalizer := func(state processbar.ProcessState, reqId int) tea.Msg { return NewPasteOperationMsg(state, reqId) }
+	processor := makePasteProcessor(p, processBarModel, panelLocation, cut)
+	msg := m.runFileProcessor(processor, finalizer, items, reqID)
+	return msg
 }
 
-// Copy all selected file or directory to the clipboard
-func (m *model) copyMultipleItem() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	m.copyItems.cut = false
-	m.copyItems.items = m.copyItems.items[:0]
-	if len(panel.selected) == 0 {
-		return
-	}
-	m.copyItems.items = panel.selected
-	fileInfo, err := os.Stat(panel.selected[0])
-	if os.IsNotExist(err) {
-		return
-	}
-	if err != nil {
-		outPutLog("Copy multiple item function get file state error", panel.selected[0], err)
-	}
-
-	if !fileInfo.IsDir() && float64(fileInfo.Size())/(1024*1024) < 250 {
-		fileContent, err := os.ReadFile(panel.selected[0])
-
-		if err != nil {
-			outPutLog("Copy multiple item function read file error", err)
-		}
-
-		if err := clipboard.WriteAll(string(fileContent)); err != nil {
-			outPutLog("Copy multiple item function write file to clipboard error", err)
-		}
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
-}
-
-// Cut directory or file
-func (m *model) cutSingleItem() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	m.copyItems.cut = true
-	m.copyItems.items = m.copyItems.items[:0]
-	if len(panel.element) == 0 {
-		return
-	}
-	m.copyItems.items = append(m.copyItems.items, panel.element[panel.cursor].location)
-	fileInfo, err := os.Stat(panel.element[panel.cursor].location)
-	if os.IsNotExist(err) {
-		m.copyItems.items = m.copyItems.items[:0]
-		return
-	}
-	if err != nil {
-		outPutLog("Cut single item get file state error", panel.element[panel.cursor].location, err)
-	}
-
-	if !fileInfo.IsDir() && float64(fileInfo.Size())/(1024*1024) < 250 {
-		fileContent, err := os.ReadFile(panel.element[panel.cursor].location)
-
-		if err != nil {
-			outPutLog("Cut single item read file error", panel.element[panel.cursor].location, err)
-		}
-
-		if err := clipboard.WriteAll(string(fileContent)); err != nil {
-			outPutLog("Cut single item write file error", panel.element[panel.cursor].location, err)
-		}
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
-}
-
-// Cut all selected file or directory to the clipboard
-func (m *model) cutMultipleItem() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	m.copyItems.cut = true
-	m.copyItems.items = m.copyItems.items[:0]
-	if len(panel.selected) == 0 {
-		return
-	}
-	m.copyItems.items = panel.selected
-	fileInfo, err := os.Stat(panel.selected[0])
-	if os.IsNotExist(err) {
-		return
-	}
-	if err != nil {
-		outPutLog("Copy multiple item function get file state error", panel.selected[0], err)
-	}
-
-	if !fileInfo.IsDir() && float64(fileInfo.Size())/(1024*1024) < 250 {
-		fileContent, err := os.ReadFile(panel.selected[0])
-
-		if err != nil {
-			outPutLog("Copy multiple item function read file error", err)
-		}
-
-		if err := clipboard.WriteAll(string(fileContent)); err != nil {
-			outPutLog("Copy multiple item function write file to clipboard error", err)
-		}
-	}
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
-}
-
-// Paste all clipboard items
-func (m model) pasteItem() {
-	id := shortuuid.New()
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-
-	if len(m.copyItems.items) == 0 {
-		return
-	}
-
+func getTotalFilesCnt(copyItems []string) int {
 	totalFiles := 0
-
-	for _, folderPath := range m.copyItems.items {
+	for _, folderPath := range copyItems {
+		// TODO : Fix this. This is inefficient
+		// In case of a cut operations for a directory with a lot of files
+		// we are unnecessarily walking the whole directory recursively
+		// while os will just perform a rename
+		// So instead of few operations this will cause the cut paste
+		// to read the whole directory recursively
+		// we should avoid doing this.
+		// Although this allows us a more detailed progress tracking
+		// this make the copy/cut more inefficient
+		// instead, we could just track progress based on total items in
+		// copyItems
+		// efficiency should be prioritized over more detailed feedback.
 		count, err := countFiles(folderPath)
 		if err != nil {
+			slog.Error("Error in countFiles", "error", err)
 			continue
 		}
 		totalFiles += count
 	}
-
-	prog := progress.New(generateGradientColor())
-	prog.PercentageStyle = footerStyle
-
-	prefixIcon := icon.Copy + icon.Space
-	if m.copyItems.cut {
-		prefixIcon = icon.Cut + icon.Space
-	}
-
-	newProcess := process{
-		name:     prefixIcon + filepath.Base(m.copyItems.items[0]),
-		progress: prog,
-		state:    inOperation,
-		total:    totalFiles,
-		done:     0,
-	}
-
-	m.processBarModel.process[id] = newProcess
-
-	message := channelMessage{
-		messageId:       id,
-		messageType:     sendProcess,
-		processNewState: newProcess,
-	}
-
-	channel <- message
-
-	p := m.processBarModel.process[id]
-	for _, filePath := range m.copyItems.items {
-		var err error
-		if m.copyItems.cut && !isExternalDiskPath(filePath) {
-			p.name = icon.Cut + icon.Space + filepath.Base(filePath)
-		} else {
-			if m.copyItems.cut {
-				p.name = icon.Cut + icon.Space + filepath.Base(filePath)
-			}
-			p.name = icon.Copy + icon.Space + filepath.Base(filePath)
-		}
-
-		errMessage := "cut item error"
-		if m.copyItems.cut && !isExternalDiskPath(filePath) {
-			err = moveElement(filePath, filepath.Join(panel.location, path.Base(filePath)))
-		} else {
-			newModel, err := pasteDir(filePath, filepath.Join(panel.location, path.Base(filePath)), id, m)
-			if err != nil {
-				errMessage = "paste item error"
-			}
-			m = newModel
-			if m.copyItems.cut {
-				os.RemoveAll(filePath)
-			}
-		}
-		p = m.processBarModel.process[id]
-		if err != nil {
-			p.state = failure
-			message.processNewState = p
-			channel <- message
-			outPutLog(errMessage, err)
-			m.processBarModel.process[id] = p
-			break
-		}
-	}
-
-	p.state = successful
-	p.done = totalFiles
-	p.doneTime = time.Now()
-	message.processNewState = p
-	channel <- message
-
-	m.processBarModel.process[id] = p
-	m.copyItems.cut = false
+	return totalFiles
 }
 
-// Extrach compress file
-func (m model) extractFile() {
-	var err error
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	ext := strings.ToLower(filepath.Ext(panel.element[panel.cursor].location))
-	outputDir := fileNameWithoutExtension(panel.element[panel.cursor].location)
-	outputDir, err = renameIfDuplicate(outputDir)
-
-	if err != nil {
-		outPutLog("Error extract file when create new directory", err)
+// Extract compressed file
+// TODO : err should be returned and properly handled by the caller
+func (m *model) getExtractFileCmd() tea.Cmd {
+	panel := m.getFocusedFilePanel()
+	if panel.Empty() {
+		return nil
 	}
 
-	switch ext {
-	case ".zip":
-		os.MkdirAll(outputDir, 0755)
-		err = unzip(panel.element[panel.cursor].location, outputDir)
+	item := panel.GetFocusedItem().Location
+
+	ext := strings.ToLower(filepath.Ext(item))
+	if !common.IsExtensionExtractable(ext) {
+		slog.Error("Error unexpected file", "extension type", ext, "item", item, "error", errors.ErrUnsupported)
+		return nil
+	}
+	reqID := m.nextIoReqCnt()
+
+	slog.Debug("Submitting Extract file request", "reqID", reqID, "item", item)
+
+	return func() tea.Msg {
+		outputDir := common.FileNameWithoutExtension(item)
+		outputDir, err := renameIfDuplicate(outputDir)
 		if err != nil {
-			outPutLog("Error extract file,", err)
+			slog.Error("Error while renaming for duplicates", "error", err)
+			return NewExtractOperationMsg(processbar.Failed, reqID)
 		}
-	default:
-		os.MkdirAll(outputDir, 0755)
-		err = extractCompressFile(panel.element[panel.cursor].location, outputDir)
+
+		err = os.MkdirAll(
+			outputDir,
+			utils.ExtractedDirMode,
+		)
 		if err != nil {
-			outPutLog("Error extract file,", err)
+			slog.Error("Error while making directory for extracting files", "error", err)
+			return NewExtractOperationMsg(processbar.Failed, reqID)
 		}
+		err = extractCompressFile(item, outputDir, &m.processBarModel)
+		if err != nil {
+			slog.Error("Error extract file", "error", err)
+			return NewExtractOperationMsg(processbar.Failed, reqID)
+		}
+		return NewExtractOperationMsg(processbar.Successful, reqID)
 	}
 }
 
-// Compress file or directory
-func (m model) compressFile() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	fileName := filepath.Base(panel.element[panel.cursor].location)
-
-	zipName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) + ".zip"
-	zipName, err := renameIfDuplicate(zipName)
-
+func checkFileReadable(filename string) error {
+	file, err := os.Open(filename)
 	if err != nil {
-		outPutLog("Error compress file when rename duplicate", err)
+		return err
 	}
+	defer file.Close()
+	return nil
+}
 
-	zipSource(panel.element[panel.cursor].location, filepath.Join(filepath.Dir(panel.element[panel.cursor].location), zipName))
+func (m *model) chooserFileWriteAndQuit(path string) error {
+	// Attempt to write to the file
+	err := os.WriteFile(variable.ChooserFile, []byte(path), utils.ConfigFilePerm)
+	if err != nil {
+		return err
+	}
+	m.modelQuitState = quitInitiated
+	return nil
 }
 
 // Open file with default editor
-func (m model) openFileWithEditor() tea.Cmd {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
+func (m *model) openFileWithEditor() tea.Cmd {
+	panel := m.getFocusedFilePanel()
+	// Check if panel is empty
+	if panel.Empty() {
+		return nil
+	}
 
-	editor := Config.Editor
+	if variable.ChooserFile != "" {
+		err := m.chooserFileWriteAndQuit(panel.GetFocusedItem().Location)
+		if err == nil {
+			return nil
+		}
+		// Continue with preview if file is not writable
+		slog.Error("Error while writing to chooser file, continuing with open via file editor", "error", err)
+	}
+
+	editor := common.Config.Editor
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
 	}
+
+	// Make sure there is an editor
 	if editor == "" {
-		editor = "nano"
+		if runtime.GOOS == utils.OsWindows {
+			editor = "notepad"
+		} else {
+			editor = "nano"
+		}
 	}
-	c := exec.Command(editor, panel.element[panel.cursor].location)
+
+	// Split the editor command into command and arguments
+	parts := strings.Fields(editor)
+	cmd := parts[0]
+
+	//nolint:gocritic // appendAssign: intentionally creating a new slice
+	args := append(parts[1:], panel.GetFocusedItem().Location)
+
+	c := exec.Command(cmd, args...) //nolint:gosec // Editor command is intentionally user-configurable.
 
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return editorFinishedMsg{err}
@@ -610,24 +519,80 @@ func (m model) openFileWithEditor() tea.Cmd {
 }
 
 // Open directory with default editor
-func (m model) openDirectoryWithEditor() tea.Cmd {
-	editor := Config.Editor
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
+func (m *model) openDirectoryWithEditor() tea.Cmd {
+	if variable.ChooserFile != "" {
+		err := m.chooserFileWriteAndQuit(m.getFocusedFilePanel().Location)
+		if err == nil {
+			return nil
+		}
+		// Continue with preview if file is not writable
+		slog.Error("Error while writing to chooser file, continuing with open via directory editor", "error", err)
 	}
+
+	editor := common.Config.DirEditor
+
 	if editor == "" {
-		editor = "nano"
+		switch runtime.GOOS {
+		case utils.OsWindows:
+			editor = "explorer"
+		case utils.OsDarwin:
+			editor = "open"
+		default:
+			editor = "vi"
+		}
 	}
-	c := exec.Command(editor, m.fileModel.filePanels[m.filePanelFocusIndex].location)
+
+	// Split the editor command into command and arguments
+	parts := strings.Fields(editor)
+	cmd := parts[0]
+	//nolint:gocritic // appendAssign: intentionally creating a new slice
+	args := append(parts[1:], m.getFocusedFilePanel().Location)
+
+	c := exec.Command(cmd, args...)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return editorFinishedMsg{err}
 	})
 }
 
 // Copy file path
-func (m model) copyPath() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	if err := clipboard.WriteAll(panel.element[panel.cursor].location); err != nil {
-		outPutLog("Copy path error", panel.element[panel.cursor].location, err)
+// TODO: This is also an IO operations, do it via tea.Cmd
+func (m *model) copyPath() {
+	pathText := m.copyPathText()
+	if pathText == "" {
+		return
 	}
+
+	if err := m.writeClipboard(pathText); err != nil {
+		slog.Error("Error while copy path", "error", err)
+	}
+}
+
+func (m *model) copyPathText() string {
+	panel := m.getFocusedFilePanel()
+
+	if panel.Empty() {
+		return ""
+	}
+
+	if panel.PanelMode == filepanel.SelectMode && panel.SelectedCount() > 0 {
+		return strings.Join(panel.GetSelectedLocationsSortedAsVisible(), "\n")
+	}
+
+	return panel.GetFocusedItem().Location
+}
+
+// TODO: This is also an IO operations, do it via tea.Cmd
+func (m *model) copyPWD() {
+	panel := m.getFocusedFilePanel()
+	if err := m.writeClipboard(panel.Location); err != nil {
+		slog.Error("Error while copy present working directory", "error", err)
+	}
+}
+
+func (m *model) writeClipboard(text string) error {
+	if m.clipboardWriter != nil {
+		return m.clipboardWriter(text)
+	}
+
+	return clipboard.WriteAll(text)
 }

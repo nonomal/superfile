@@ -8,21 +8,29 @@ head:
 
 > Sort by A-Z
 
+## 0x96f
+
+- Theme name: `0x96f`
+- Ported by: https://github.com/filipjanevski
+- Original Author: https://github.com/filipjanevski/
+
+![0x96f theme preview showing dark color scheme with blue accents](../../../assets/theme/0x96f.png)
+
+## Ayu Dark
+
+- Theme name: `ayu-dark`
+- Ported by: https://github.com/rustnomicon
+- Original Author: https://github.com/ayu-theme/
+
+![Ayu Dark theme preview showing warm dark color palette](../../../assets/theme/ayu-dark.png)
+
 ## Blood
 
 - Theme name: `blood`
 - Ported by: https://github.com/charlesrocket
 - Original Author: https://github.com/charlesrocket
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/blood.png?raw=true)
-
-## Catppuccin
-
-- Theme name: `catppuccin`
-- Ported by: https://github.com/AnshumanNeon
-- Original Author: https://github.com/catppuccin
-
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/catppuccin.png?raw=true)
+![Blood theme preview showing dark red color scheme](../../../assets/theme/blood.png)
 
 ## Catppuccin Frappe
 
@@ -30,7 +38,7 @@ head:
 - Ported by: https://github.com/GV14982
 - Original Author: https://github.com/catppuccin
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/catppuccin-frappe.png?raw=true)
+![Catppuccin Frappe theme preview showing muted dark colors](../../../assets/theme/catppuccin-frappe.png)
 
 ## Catppuccin Latte
 
@@ -38,7 +46,7 @@ head:
 - Ported by: https://github.com/GV14982
 - Original Author: https://github.com/catppuccin
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/catppuccin-latte.png?raw=true)
+![Catppuccin Latte theme preview showing light color scheme](../../../assets/theme/catppuccin-latte.png)
 
 ## Catppuccin Macchiato
 
@@ -46,7 +54,15 @@ head:
 - Ported by: https://github.com/GV14982
 - Original Author: https://github.com/catppuccin
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/catppuccin-macchiato.png?raw=true)
+![Catppuccin Macchiato theme preview showing medium dark colors](../../../assets/theme/catppuccin-macchiato.png)
+
+## Catppuccin Mocha
+
+- Theme name: `catppuccin-mocha`
+- Ported by: https://github.com/AnshumanNeon
+- Original Author: https://github.com/catppuccin
+
+![Catppuccin theme preview showing pastel color palette](../../../assets/theme/catppuccin.png)
 
 ## Dracula
 
@@ -54,7 +70,23 @@ head:
 - Ported by: https://github.com/BeanieBarrow
 - Original Author: https://github.com/zenorocha
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/dracula.png?raw=true)
+![Dracula theme preview showing purple and pink dark color scheme](../../../assets/theme/dracula.png)
+
+## Everforest Dark Medium
+
+- Theme name: `everforest-dark-medium`
+- Ported by: https://github.com/dotintegral
+- Original Author: https://github.com/sainnhe/
+
+![Everforest Dark Medium theme preview showing nature-inspired green colors](../../../assets/theme/everforest-dark-medium.png)
+
+## Everforest Dark Hard
+
+- Theme name: `everforest-dark-hard`
+- Ported by: https://github.com/fzahner
+- Original Author: https://github.com/sainnhe/
+
+![Everforest Dark hard theme preview showing nature-inspired green colors](../../../assets/theme/everforest-dark-hard.png)
 
 ## Gruvbox
 
@@ -62,7 +94,15 @@ head:
 - Ported by: https://github.com/yorukot
 - Original Author: https://github.com/morhetz/
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/gruvbox.png?raw=true)
+![Gruvbox theme preview showing retro warm color palette](../../../assets/theme/gruvbox.png)
+
+## Gruvbox Dark Hard
+
+- Theme name: `gruvbox-dark-hard`
+- Ported by: https://github.com/frost-phoenix
+- Original Author: https://github.com/morhetz/
+
+![Gruvbox Dark Hard theme preview showing high contrast warm colors](../../../assets/theme/gruvbox-dark-hard.png)
 
 ## Hacks
 
@@ -70,7 +110,7 @@ head:
 - Ported by: https://github.com/charlesrocket
 - Original Author: https://github.com/charlesrocket
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/hacks.png?raw=true)
+![Hacks theme preview showing cyberpunk-inspired color scheme](../../../assets/theme/hacks.png)
 
 ## Kaolin
 
@@ -78,7 +118,15 @@ head:
 - Ported by: https://github.com/AnshumqanNeon
 - Original Author: https://github.com/ogdenwebb/
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/kaolin.png?raw=true)
+![Kaolin theme preview showing brown and orange earth tones](../../../assets/theme/kaolin.png)
+
+## Monokai
+
+- Theme name: `monokai`
+- Ported by: https://github.com/CommandJoo
+- Original Author: https://github.com/monokai
+
+![Monokai theme preview showing classic dark syntax highlighting colors](../../../assets/theme/monokai.png)
 
 ## Nord
 
@@ -86,7 +134,15 @@ head:
 - Ported by: https://github.com/ramses-eltany
 - Original Author: https://github.com/nordtheme
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/nord.png?raw=true)
+![Nord theme preview showing cool blue and white arctic colors](../../../assets/theme/nord.png)
+
+## OneDark
+
+- Theme name: `onedark`
+- Ported by: https://github.com/CommandJoo
+- Original Author: https://github.com/one-dark
+
+![OneDark theme preview showing dark background with blue accents](../../../assets/theme/onedark.png)
 
 ## Poimandres
 
@@ -94,7 +150,7 @@ head:
 - Ported by: https://github.com/Myles-J
 - Original Author: https://github.com/drcmda/
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/poimandres.png?raw=true)
+![Poimandres theme preview showing dark purple and teal color scheme](../../../assets/theme/poimandres.png)
 
 ## Rosé Pine
 
@@ -102,14 +158,15 @@ head:
 - Ported by: https://github.com/pearcidar
 - Original Author: https://github.com/rose-pine
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/rose-pine.png?raw=true)
+![Rosé Pine theme preview showing soft pink and purple colors](../../../assets/theme/rose-pine.png)
 
 ## Sugarplum
+
 - Theme name: `sugarplum`
 - Ported by: https://github.com/lemonlime0x3C33
 - Original Author: https://github.com/lemonlime0x3C33
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/sugarplum.png?raw=true)
+![Sugarplum theme preview showing sweet purple and pink color palette](../../../assets/theme/sugarplum.png)
 
 ## Tokyonight
 
@@ -117,4 +174,4 @@ head:
 - Ported by: https://github.com/pearcidar
 - Original Author: https://github.com/enkia/
 
-![](https://github.com/yorukot/superfile/blob/main/asset/theme/tokyonight.png?raw=true)
+![Tokyonight theme preview showing dark blue nighttime color scheme](../../../assets/theme/tokyonight.png)

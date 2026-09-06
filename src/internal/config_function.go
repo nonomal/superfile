@@ -1,253 +1,154 @@
 package internal
 
 import (
-	"embed"
-	"fmt"
-	"log"
+	"errors"
+	"log/slog"
 	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
+	"runtime"
+
+	zoxidelib "github.com/lazysegtree/go-zoxide"
+
+	"github.com/yorukot/superfile/src/pkg/utils"
+
+	"github.com/yorukot/superfile/src/internal/ui/filepanel"
 
 	"github.com/barasher/go-exiftool"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/pelletier/go-toml/v2"
+
+	"github.com/yorukot/superfile/src/internal/ui/processbar"
+	"github.com/yorukot/superfile/src/internal/ui/rendering"
+	"github.com/yorukot/superfile/src/internal/ui/sidebar"
+
 	variable "github.com/yorukot/superfile/src/config"
 	"github.com/yorukot/superfile/src/config/icon"
+	"github.com/yorukot/superfile/src/internal/common"
 )
 
-func initialConfig(dir string) (toggleDotFileBool bool, firstFilePanelDir string) {
-	var err error
+// initialConfig load and handle all configuration files (spf config,Hotkeys
+// themes) setted up. Processes input directories and returns toggle states.
 
-	logOutput, err = os.OpenFile(variable.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+// This is the only usecase of named returns, distinguish between multiple return values
+func initialConfig(firstPanelPaths []string) (toggleDotFile bool, //nolint: nonamedreturns // See above
+	toggleFooter bool, zClient *zoxidelib.Client) {
+	// Open log stream
+	file, err := os.OpenFile(variable.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, utils.LogFilePerm)
+
+	// TODO : This could be improved if we want to make superfile more resilient to errors
+	// For example if the log file directories have access issues.
+	// we could pass a dummy object to log.SetOutput() and the app would still function.
 	if err != nil {
-		log.Fatalf("Error while opening superfile.log file: %v", err)
+		utils.PrintfAndExitf("Error while opening superfile.log file : %v", err)
+	}
+	common.LoadConfigFile()
+
+	logLevel := slog.LevelInfo
+	if common.Config.Debug {
+		logLevel = slog.LevelDebug
 	}
 
-	loadConfigFile()
+	slog.SetDefault(slog.New(slog.NewTextHandler(
+		file, &slog.HandlerOptions{Level: logLevel})))
 
-	loadHotkeysFile()
+	printRuntimeInfo()
 
-	loadThemeFile()
+	common.LoadHotkeysFile(common.Config.IgnoreMissingFields)
 
-	icon.InitIcon(Config.Nerdfont)
+	common.LoadThemeFile()
 
-	toggleDotFileData, err := os.ReadFile(variable.ToggleDotFile)
-	if err != nil {
-		outPutLog("Error while reading toggleDotFile data error:", err)
-	}
-	if string(toggleDotFileData) == "true" {
-		toggleDotFileBool = true
-	} else if string(toggleDotFileData) == "false" {
-		toggleDotFileBool = false
-	}
-	LoadThemeConfig()
+	icon.InitIcon(common.Config.Nerdfont, common.Theme.DirectoryIconColor)
 
-	if Config.Metadata {
+	common.LoadThemeConfig()
+	common.LoadPrerenderedVariables()
+
+	// TODO: Make sure to clean it up. Via et.Close()
+	// Note: All the tool we use to interact with OS, should be abstracted behind a struc
+	// Have exiftool manager, Zoxide Manager, OS Manager, Xtractor, Zipper, Command Executor
+	if common.Config.Metadata {
 		et, err = exiftool.NewExiftool()
 		if err != nil {
-			outPutLog("Initial model function init exiftool error", err)
+			slog.Error("Error while initial model function init exiftool error", "error", err)
 		}
 	}
 
-	if dir != "" {
-		firstFilePanelDir, err = filepath.Abs(dir)
-	} else {
-		Config.DefaultDirectory = strings.Replace(Config.DefaultDirectory, "~", variable.HomeDir, -1)
-		firstFilePanelDir, err = filepath.Abs(Config.DefaultDirectory)
-	}
-
+	cwd, err := os.Getwd()
 	if err != nil {
-		firstFilePanelDir = variable.HomeDir
+		slog.Error("cannot get current working directory", "error", err)
+		cwd = variable.HomeDir
 	}
 
-	return toggleDotFileBool, firstFilePanelDir
+	if common.Config.ZoxideSupport {
+		zClient, err = zoxidelib.New()
+		if err != nil {
+			slog.Error("Error initializing zoxide client", "error", err)
+		}
+	}
+
+	updateFirstFilePanelPaths(firstPanelPaths, cwd, zClient)
+
+	slog.Debug("Directory configuration", "cwd", cwd, "start_paths", firstPanelPaths)
+	printRuntimeInfo()
+
+	toggleDotFile = utils.ReadBoolFile(variable.ToggleDotFile, false)
+	toggleFooter = utils.ReadBoolFile(variable.ToggleFooter, true)
+
+	return toggleDotFile, toggleFooter, zClient
 }
 
-func loadConfigFile() {
-
-	_ = toml.Unmarshal([]byte(ConfigTomlString), &Config)
-	tempForCheckMissingConfig := ConfigType{}
-
-	data, err := os.ReadFile(variable.ConfigFile)
-	if err != nil {
-		log.Fatalf("Config file doesn't exist: %v", err)
-	}
-
-	_ = toml.Unmarshal(data, &tempForCheckMissingConfig)
-	err = toml.Unmarshal(data, &Config)
-	if err != nil {
-		log.Fatalf("Error decoding config file ( your config file may have misconfigured ): %v", err)
-	}
-
-	if !reflect.DeepEqual(Config, tempForCheckMissingConfig) {
-		tomlData, err := toml.Marshal(Config)
-		if err != nil {
-			log.Fatalf("Error encoding config: %v", err)
+func updateFirstFilePanelPaths(firstPanelPaths []string, cwd string, zClient *zoxidelib.Client) {
+	for i := range firstPanelPaths {
+		if firstPanelPaths[i] == "" {
+			firstPanelPaths[i] = common.Config.DefaultDirectory
 		}
-
-		err = os.WriteFile(variable.ConfigFile, tomlData, 0644)
-		if err != nil {
-			log.Fatalf("Error writing config file: %v", err)
-		}
-	}
-	if (Config.FilePreviewWidth > 10 || Config.FilePreviewWidth < 2) && Config.FilePreviewWidth != 0 {
-		fmt.Println(loadConfigError("file_preview_width"))
-		os.Exit(0)
-	}
-
-	if Config.SidebarWidth != 0 && (Config.SidebarWidth < 3 || Config.SidebarWidth > 20) {
-		fmt.Println(loadConfigError("sidebar_width"))
-		os.Exit(0)
-	}
-}
-
-func loadHotkeysFile() {
-
-	_ = toml.Unmarshal([]byte(HotkeysTomlString), &hotkeys)
-	hotkeysFromConfig := HotkeysType{}
-	data, err := os.ReadFile(variable.HotkeysFile)
-
-	if err != nil {
-		log.Fatalf("Config file doesn't exist: %v", err)
-	}
-	_ = toml.Unmarshal(data, &hotkeysFromConfig)
-	err = toml.Unmarshal(data, &hotkeys)
-	if err != nil {
-		log.Fatalf("Error decoding hotkeys file ( your config file may have misconfigured ): %v", err)
-	}
-
-	hasMissingHotkeysInConfig := !reflect.DeepEqual(hotkeys, hotkeysFromConfig)
-
-	if hasMissingHotkeysInConfig && !variable.FixHotkeys {
-		hotKeysConfig := reflect.ValueOf(hotkeysFromConfig)
-		for i := 0; i < hotKeysConfig.NumField(); i++ {
-			field := hotKeysConfig.Type().Field(i)
-			value := hotKeysConfig.Field(i)
-			name := field.Name
-			isMissing := value.Len() == 0
-
-			if isMissing {
-				fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#F93939")).Render("Error") +
-					lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFEE")).Render(" ┃ ") +
-					fmt.Sprintf("Field \"%s\" is missing in hotkeys configuration\n", name))
+		originalPath := firstPanelPaths[i]
+		firstPanelPaths[i] = utils.ResolveAbsPath(cwd, firstPanelPaths[i])
+		if _, err := os.Stat(firstPanelPaths[i]); err != nil {
+			slog.Error("cannot get stats", "path", firstPanelPaths[i], "error", err)
+			// In case the path provided did not exist, use zoxide query
+			// else, fallback to home dir
+			if common.Config.ZoxideSupport && zClient != nil {
+				path, err := attemptZoxideForInitPath(originalPath, zClient)
+				if err != nil {
+					slog.Error("Zoxide query error", "originalPath", originalPath, "error", err)
+					firstPanelPaths[i] = variable.HomeDir
+				} else {
+					firstPanelPaths[i] = path
+				}
+			} else {
+				firstPanelPaths[i] = variable.HomeDir
 			}
 		}
-		fmt.Println("To add missing fields to hotkeys directory automaticially run Superfile with the --fix-hotkeys flag")
-	}
-
-	if hasMissingHotkeysInConfig && variable.FixHotkeys {
-		writeHotkeysFile(hotkeys)
-	}
-
-	val := reflect.ValueOf(hotkeys)
-
-	for i := 0; i < val.NumField(); i++ {
-		field := val.Type().Field(i)
-		value := val.Field(i)
-
-		if value.Kind() != reflect.Slice || value.Type().Elem().Kind() != reflect.String {
-			fmt.Println(lodaHotkeysError(field.Name))
-			os.Exit(0)
-		}
-
-		hotkeysList := value.Interface().([]string)
-
-		if len(hotkeysList) == 0 || hotkeysList[0] == "" {
-			fmt.Println(lodaHotkeysError(field.Name))
-			os.Exit(0)
-		}
-	}
-
-}
-
-func writeHotkeysFile(hotkeys HotkeysType) {
-	tomlData, err := toml.Marshal(hotkeys)
-	if err != nil {
-		log.Fatalf("Error encoding hotkeys: %v", err)
-	}
-
-	err = os.WriteFile(variable.HotkeysFile, tomlData, 0644)
-	if err != nil {
-		log.Fatalf("Error writing hotkeys file: %v", err)
 	}
 }
 
-func loadThemeFile() {
-	data, err := os.ReadFile(variable.ThemeFolder + "/" + Config.Theme + ".toml")
-	if err != nil {
-		data = []byte(DefaultThemeString)
-	}
+func attemptZoxideForInitPath(originalPath string, zClient *zoxidelib.Client) (string, error) {
+	path, err := zClient.Query(originalPath)
 
-	err = toml.Unmarshal(data, &theme)
 	if err != nil {
-		log.Fatalf("Error while decoding theme file( Your theme file may have errors ): %v", err)
+		return "", err
 	}
+	if path == "" {
+		return "", errors.New("zoxide returned empty path")
+	}
+	if stat, statErr := os.Stat(path); statErr != nil || !stat.IsDir() {
+		return "", errors.New("zoxide returned invalid path")
+	}
+	return path, nil
 }
 
-func LoadAllDefaultConfig(content embed.FS) {
-
-	temp, err := content.ReadFile("src/superfile_config/hotkeys.toml")
-	if err != nil {
-		return
-	}
-	HotkeysTomlString = string(temp)
-
-	temp, err = content.ReadFile("src/superfile_config/config.toml")
-	if err != nil {
-		return
-	}
-	ConfigTomlString = string(temp)
-
-	temp, err = content.ReadFile("src/superfile_config/theme/catppuccin.toml")
-	if err != nil {
-		return
-	}
-	DefaultThemeString = string(temp)
-
-	currentThemeVersion, err := os.ReadFile(variable.ThemeFileVersion)
-
-	if err != nil && !os.IsNotExist(err) {
-		outPutLog("Error reading from file:", err)
-		return
-	}
-
-	_, err = os.Stat(variable.ThemeFolder)
-
-	if os.IsNotExist(err) {
-		err := os.MkdirAll(variable.ThemeFolder, 0755)
-		if err != nil {
-			outPutLog("error create theme direcroty", err)
-			return
-		}
-	} else if string(currentThemeVersion) == variable.CurrentVersion {
-		return
-	}
-
-	files, err := content.ReadDir("src/superfile_config/theme")
-	if err != nil {
-		outPutLog("error read theme directory from embed", err)
-		return
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		src, err := content.ReadFile(filepath.Join("src/superfile_config/theme", file.Name()))
-		if err != nil {
-			outPutLog("error read theme file from embed", err)
-			return
-		}
-
-		file, err := os.Create(filepath.Join(variable.ThemeFolder, file.Name()))
-		if err != nil {
-			outPutLog("error create theme file from embed", err)
-			return
-		}
-		file.Write(src)
-		defer file.Close()
-	}
-
-	os.WriteFile(variable.ThemeFileVersion, []byte(variable.CurrentVersion), 0644)
+func printRuntimeInfo() {
+	slog.Debug("Runtime information", "runtime.GOOS", runtime.GOOS)
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	slog.Debug("Memory usage",
+		"alloc_bytes", memStats.Alloc,
+		"total_alloc_bytes", memStats.TotalAlloc,
+		"heap_objects", memStats.HeapObjects,
+		"sys_bytes", memStats.Sys)
+	slog.Debug("Object sizes",
+		"model_size_bytes", reflect.TypeOf(model{}).Size(),
+		"filePanel_size_bytes", reflect.TypeOf(filepanel.Model{}).Size(),
+		"sidebarModel_size_bytes", reflect.TypeOf(sidebar.Model{}).Size(),
+		"renderer_size_bytes", reflect.TypeOf(rendering.Renderer{}).Size(),
+		"borderConfig_size_bytes", reflect.TypeOf(rendering.BorderConfig{}).Size(),
+		"process_size_bytes", reflect.TypeOf(processbar.Process{}).Size())
 }

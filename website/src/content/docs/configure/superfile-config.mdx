@@ -1,99 +1,306 @@
 ---
-title: Superfile config
+title: superfile config
 description: Configure your superfile
 head:
   - tag: title
-    content: Superfile config | superfile
+    content: superfile config | superfile
 ---
 
-import CodeBlock from '../../../components/code.astro';
+import CodeBlock from "../../../components/code.astro";
 
-You can enter the following command to set it up;
+You can edit your superfile config file with the following command:
 
 ```bash
 $EDITOR config_path
 ```
 
 :::tip
-If you want to get the set path you can try `spf pl` which will print out the file locations of all superfile.
+
+To see the path locations of your superfile files, use the command `spf pl`.
+
 :::
 
 ### Setting
 
 - ###### theme
-You can go to [here](/configure/custom-theme) to know how to config it
+
+[Click here](/configure/custom-theme) for instructions to edit the theme.
 
 - ###### editor
-The editor files/directories will be opened with. (leave blank to use the EDITOR environment variable).
+
+The editor your files will be opened with (Leave blank to use the EDITOR environment variable. If EDITOR environment variable is not set, it will default to `nano` for macOS/Linux, and `notepad` for Windows).
+
+- ###### dir_editor
+
+The editor your directories will be opened with (Leave blank to use defaults : `vi` - Linux, `open` - macOS, `explorer` - Windows).
 
 - ###### auto_check_update
-`true`  => Turning on will check whether updates are needed every time superfile is closed (only checked once a day)
 
-`false` => If closed, no checks will be performed
+`true` => Checks whether updates are needed when you exit superfile (only checks once a day).
+
+`false` => No checks performed.
 
 - ###### cd_on_quit
-`true` => Every time you exit superfile, it will navigate the path of the terminal to the path of the last file panel you used.
 
-`false` => Nothing happen
+`true` => When you exit superfile, changes the terminal path to the last file panel you used.
 
-If you want to open this feature you need to copy the code into `~/.bashrc`
+`false` => When you exit superfile, the terminal path remains the same prior to superfile.
 
-:::note
-This doesn't work on windows at the moment.
-:::
+After setting to `true`, you need to update your shell config file. Sample changes :
+
+##### macOS/Linux (bash or fish)
+
+###### Bash
+
+Open the file:
+
+```bash
+$EDITOR ~/.bashrc
+```
+
+Copy the following code into the file:
 
 <CodeBlock file="cd_on_quit/cd_on_quit.sh" />
 
-and reload ~/.bashrc
+Save, exit, and reload your `.bashrc` file:
 
 ```bash
 source ~/.bashrc
 ```
 
-- ###### default_open_file_preview
-`true` =>  The file preview panel opens automatically every time you open superfile.
+###### Fish
 
-`false` => The file preview panel will not open automatically when you open a superfile.
+Open the file:
+
+```bash
+$EDITOR ~/.config/fish/config.fish
+```
+
+If you suspect your `config.fish` file is located somewhere else, read [the Fish shell documentation](https://fishshell.com/docs/current/language.html#configuration)
+
+Copy the following code into the file:
+
+<CodeBlock file="cd_on_quit/cd_on_quit.fish" />
+
+Save, exit, and reload `config.fish`:
+
+```bash
+source ~/.config/fish/config.fish
+```
+
+##### Windows (Powershell)
+
+Open the file:
+
+```powershell
+notepad $PROFILE
+```
+
+Copy the following code into the file:
+
+<CodeBlock file="cd_on_quit/cd_on_quit.ps1" />
+
+Save, exit, and reload your profile.
+
+```powershell
+. $PROFILE
+```
+
+:::note
+
+You need to make sure powershell is allowed to execute script. If you get error like `running scripts is disabled on this system`. You need to allow it.
+
+Example command to enable - `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned`
+
+:::
+
+- ###### default_open_file_preview
+
+`true` => Shows the file preview window when you run superfile.
+
+`false` => Hides the file preview window when you run a superfile.
+
+- ###### show_image_preview
+
+`true` => Shows the image preview in file preview panel when an image file is selected.
+
+`false` => Does not show the image preview.
+
+- ###### show_panel_footer_info
+
+`true` => Shows additional footer info for file panel like panel mode and sort type.
+
+`false` => Does not show additional footer info for file panel
 
 - ###### file_size_use_si
-`true` => The file/directory sizes will be displayed using powers of 1000 (kB, MB, GB).
 
-`false` => The file/directory sizes will be displayed using powers of 1024 (KiB, MiB, GiB).
+`true` => Displays the file/directory sizes using powers of 1000 (kB, MB, GB).
+
+`false` => Displays the file/directory sizes using powers of 1024 (KiB, MiB, GiB).
+
+- ###### default_directory
+
+The default location every time superfile is opened. Supports `~` and `.`
+
+- ###### default_sort_type
+
+File panel sorting type. Directories will always be displayed at the top.
+
+`0` => Name
+
+`1` => Size
+
+`2` => Date Modified
+
+`3` => Type
+
+`4` => Natural
+
+- ###### sort_order_reversed
+
+File panel sorting order.
+
+`false` => Ascending (a-z)
+
+`true` => Descending (z-a)
+
+- ###### case_sensitive_sort
+
+File panel sorting case sensitivity (if `true`, uppercase letters come before lowercase letters).
+
+`true` => Case sensitive ("B" comes before "a")
+
+`false` => Case insensitive ("a" comes before "B")
+
+- ###### shell_close_on_success
+
+Controls whether the shell prompt closes automatically after a command succeeds.
+
+`true` => Close the shell after successful command execution
+
+`false` => Keep the shell open after successful command execution
+
+- ###### debug
+
+Whether to enable debug mode. (if `true`, more verbose logs are written in log file).
+
+`true` => DEBUG, INFO, WARN, ERROR logs are written to log file
+
+`false` => INFO, WARN, ERROR logs are written to log file
+
+- ###### ignore_missing_fields
+
+Controls whether warnings about missing fields in the config file are displayed.
+
+`true` => No warnings will be shown when fields are missing from the config file
+
+`false` => Warnings will be shown for any missing fields in the config file
+
+- ###### page_scroll_size
+
+Number of lines to scroll when using PgUp/PgDown keys.
+
+`0` => Full page scroll (default behavior)
+
+`n` (where n > 0) => Scroll exactly n lines
+
+- ###### file_panel_extra_columns
+
+Count of extra columns in file panel in addition to file name.
+
+`0` => Extra columns feature is disabled `1` => Also show size column `2` => Also show modify date `3` => Also show permission column
+
+:::caution
+
+Even though the extra columns are enabled, they will be hidden if the size of the filepanel is small. Please either increase the size or adjust the file_panel_name_percent config if you don't see the columns.
+
+:::
+
+- ###### file_panel_name_percent
+
+Percentage of file panel width allocated to file names (25-100). Higher values give more space to names, less to extra columns.
 
 ### Style
 
+- ###### code_previewer
+
+`''` => Use the builtin syntax highlighting for code files with _chroma_. `'bat'` => Use syntax highlighting provided by the [`bat`](https://github.com/sharkdp/bat) command line tool.
+
+- ###### nerdfont
+
+`true` => Use nerdfont for directories and file icons.
+
+`false` => Don't use nerdfont. If you don't have or don't want Nerdfont installed you can turn this off
+
+- ###### show_select_icons
+
+`true` => Show checkbox icons in select mode.
+
+`false` => Don't show checkbox icons in select mode.
+
+:::note
+
+This setting is ignored unless `nerdfont = true`. Both `nerdfont` and `show_select_icons` must be `true` for checkbox icons to appear.
+
+:::
+
 - ###### transparent_background
-`true` => If enabled, the background color will not be rendered (transparent). This is useful if your terminal background is transparent.
 
-`false` => If turned off, the background will be rendered (with color) to maintain theme consistency.
+`true` => The background color is not rendered (transparent). This is useful if your terminal background is transparent.
 
-- ###### default_directory
-The default location every time superfile is opened, supports `~` and `.`
+`false` => The background is rendered (with color) to maintain theme consistency.
 
 - ###### file_preview_width
+
 This setting is an integer.
 
-`0` => When it is 0, it means that the width of the File preview panel will be the same as that of the File panel.
+`0` => The width of the file preview window is the same as the file panel.
 
-`X` => When it is any other number, it means that the width of the File preview panel will be the width of the entire panel (total width of the terminal - width of the sidebar) divided by X.
+`X` => The width of the file preview window is 1/`X` of the terminal width (minus the sidebar width). It is calculated as: (terminal width - sidebar width) / `X`
 
 :::caution
-The number of entries must be from 2 to 10
+
+`X` must be from 2 to 10.
+
 :::
+
+- ###### enable_file_preview_border
+
+`true` => Enable border around the file preview panel
+
+`false` => Disable border around the file preview panel
 
 - ###### sidebar_width
+
 This setting is an integer.
 
-`0` => If the number is 0 then the sidebar will not display.
+`0` => The sidebar will not display.
 
-`X` => This number will be the width of the sidebar width.
+`X` => The width of the sidebar(excluding borders).
 
 :::caution
-Figures must be 3-20
+
+`X` must be from 5 to 20.
+
 :::
 
+- ###### sidebar_sections
+
+Order of sidebar sections.
+
+`["home", "pinned", "disks"]` => Default order.
+
+Only sections included in this list will be displayed. You can remove sections or change their order, for example: `["pinned", "home"]`.
+
 - ###### Border style
+
 Here are a few suggested styles, of course you can change them to your own:
+
+:::caution
+
+Make sure to add strings exactly one character wide. Use ' ' for borderless
+
+:::
 
 ```toml
 # ...
@@ -125,7 +332,54 @@ border_middle_right = "┤"
 #...
 ```
 
+### Plugins
+
+- ###### metadata
+
+Shows more detailed metadata for files and directories.
+
+`true` => Enable detailed metadata. Requires [`exiftool`](https://exiftool.org).
+
+`false` => Use the built-in metadata only.
+
+- ###### enable_md5_checksum
+
+Adds an MD5 checksum entry to metadata for regular files.
+
+`true` => Calculate and show MD5 checksums in the metadata panel.
+
+`false` => Do not calculate MD5 checksums.
+
+:::caution
+
+Calculating checksums reads the selected file, so it may be slow for large files.
+
+:::
+
+- ###### zoxide_support
+
+Enables the zoxide navigation modal.
+
+`true` => Enable zoxide navigation. Requires [`zoxide`](https://github.com/ajeetdsouza/zoxide).
+
+`false` => Disable zoxide navigation.
+
+- ###### open_with
+
+Allows users to map file extensions to commands used to open them. The file path will be appended as the last argument.
+
+:::caution
+
+Must be at the very end of the file
+
+:::
+
+```toml
+[open_with]
+xopp = "xournalpp"
+conf = "nvim"
+```
+
 ### Default superfile config
 
 <CodeBlock file="src/superfile_config/config.toml" />
-

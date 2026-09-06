@@ -22,7 +22,6 @@ Write-Host -ForegroundColor Red         "                    `$`$/              
 Write-Host ""
 
 $package = "superfile"
-$version = "1.1.4"
 
 $installInstructions = @'
 This uninstaller is only available for Windows.
@@ -41,7 +40,7 @@ Write-Host "Removing folder..."
 $superfileProgramPath = [Environment]::GetFolderPath("LocalApplicationData") + "\Programs\superfile"
 try {
     if (Test-Path $superfileProgramPath) {
-      Remove-Item -Path $superfileProgramPath -Recurse -Force
+        Remove-Item -Path $superfileProgramPath -Recurse -Force
     }
 }
 catch {

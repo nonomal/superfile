@@ -1,417 +1,103 @@
 package internal
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/lithammer/shortuuid"
-	"github.com/reinhrst/fzf-lib"
-	"github.com/yorukot/superfile/src/config/icon"
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/yorukot/superfile/src/pkg/utils"
+
+	"github.com/yorukot/superfile/src/internal/ui/processbar"
 )
 
-// Check if the directory is external disk path
-func isExternalDiskPath(path string) bool {
-	dir := filepath.Dir(path)
+var suffixRegexp = regexp.MustCompile(`^(.*)\((\d+)\)$`)
 
-	// exclude timemachine
-	if strings.HasPrefix(dir, "/Volumes/.timemachine") {
+// Check if the directory is external disk path
+// TODO : This function should be give two directories, and it should return
+// if the two share a different disk partition.
+// Ideally we shouldn't even try to figure that out in our file operations, and let OS handles it.
+// But at least right now its not okay. This returns if `path` is an External disk
+// from perspective of `/`, but it should tell from perspective of currently open directory
+// The usage of this function in cut/paste is not as expected.
+func isExternalDiskPath(path string) bool {
+	// This is very vague. You cannot tell if a path is belonging to an external partition
+	// if you dont define the source path to compare with
+	// But making this true will cause slow file operations based on current implementation
+	if runtime.GOOS == utils.OsWindows {
 		return false
 	}
 
-	return strings.HasPrefix(dir, "/mnt") ||
-		strings.HasPrefix(dir, "/media") ||
-		strings.HasPrefix(dir, "/run/media") ||
-		strings.HasPrefix(dir, "/Volumes")
+	// exclude timemachine on macOS
+	if strings.HasPrefix(path, "/Volumes/.timemachine") {
+		return false
+	}
+
+	// to filter out mounted partitions like /, /boot etc
+	return strings.HasPrefix(path, "/mnt") ||
+		strings.HasPrefix(path, "/media") ||
+		strings.HasPrefix(path, "/run/media") ||
+		strings.HasPrefix(path, "/Volumes")
 }
 
-func returnFocusType(focusPanel focusPanelType) filePanelFocusType {
-	if focusPanel == nonePanelFocus {
-		return focus
+func checkFileNameValidity(name string) error {
+	switch {
+	case name == ".", name == "..":
+		return errors.New("file name cannot be '.' or '..'")
+	case strings.HasSuffix(name, fmt.Sprintf("%c.", filepath.Separator)),
+		strings.HasSuffix(name, fmt.Sprintf("%c..", filepath.Separator)):
+		return fmt.Errorf("file name cannot end with '%c.' or '%c..'", filepath.Separator, filepath.Separator)
+	default:
+		return nil
 	}
-	return secondFocus
-}
-
-func returnFolderElement(location string, displayDotFile bool) (directoryElement []element) {
-
-	files, err := os.ReadDir(location)
-	if len(files) == 0 {
-		return directoryElement
-	}
-
-	if err != nil {
-		outPutLog("Return folder element function error", err)
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].IsDir() && !files[j].IsDir() {
-			return true
-		}
-		if !files[i].IsDir() && files[j].IsDir() {
-			return false
-		}
-		return files[i].Name() < files[j].Name()
-	})
-
-	for _, item := range files {
-		fileInfo, err := item.Info()
-		if err != nil {
-			continue
-		}
-
-		if !displayDotFile && strings.HasPrefix(fileInfo.Name(), ".") {
-			continue
-		}
-		if fileInfo == nil {
-			continue
-		}
-		newElement := element{
-			name:      item.Name(),
-			directory: item.IsDir(),
-		}
-		if location == "/" {
-			newElement.location = location + item.Name()
-		} else {
-			newElement.location = filepath.Join(location, item.Name())
-		}
-		directoryElement = append(directoryElement, newElement)
-	}
-
-	return directoryElement
-}
-
-func returnFolderElementBySearchString(location string, displayDotFile bool, searchString string) (folderElement []element) {
-
-	items, err := os.ReadDir(location)
-	if err != nil {
-		outPutLog("Return folder element function error", err)
-	}
-
-	folderElementMap := map[string]element{}
-	fileAndDirectories := []string{}
-
-	for _, item := range items {
-		fileInfo, _ := item.Info()
-		if !displayDotFile && strings.HasPrefix(fileInfo.Name(), ".") {
-			continue
-		}
-
-		if fileInfo == nil {
-			continue
-		}
-
-		folderElementLocation := location + "/" + item.Name()
-		if location == "/" {
-			folderElementLocation = location + item.Name()
-		}
-
-		fileAndDirectories = append(fileAndDirectories, item.Name())
-		folderElementMap[item.Name()] = element{
-			name:      item.Name(),
-			directory: item.IsDir(),
-			location:  folderElementLocation,
-		}
-
-	}
-
-	var options = fzf.DefaultOptions()
-	var hayStack = fileAndDirectories
-	var myFzf = fzf.New(hayStack, options)
-	var result fzf.SearchResult
-	myFzf.Search(searchString)
-	result = <-myFzf.GetResultChannel()
-	myFzf.End()
-
-	for _, item := range result.Matches {
-		resultItem := folderElementMap[item.Key]
-		resultItem.matchRate = float64(item.Score)
-		folderElement = append(folderElement, resultItem)
-	}
-
-	// Sort folders and files by match rate
-	sort.Slice(folderElement, func(i, j int) bool {
-		return folderElement[i].matchRate > folderElement[j].matchRate
-	})
-
-	return folderElement
-}
-
-func panelElementHeight(mainPanelHeight int) int {
-	return mainPanelHeight - 3
-}
-
-func bottomElementHeight(bottomElementHeight int) int {
-	return bottomElementHeight - 5
-}
-
-func arrayContains(s []string, str string) bool {
-	for _, v := range s {
-		if v == str {
-			return true
-		}
-	}
-	return false
-}
-
-func outPutLog(values ...interface{}) {
-	log.SetOutput(logOutput)
-	for _, value := range values {
-		log.Println(value)
-	}
-}
-
-func removeElementByValue(slice []string, value string) []string {
-	newSlice := []string{}
-	for _, v := range slice {
-		if v != value {
-			newSlice = append(newSlice, v)
-		}
-	}
-	return newSlice
 }
 
 func renameIfDuplicate(destination string) (string, error) {
-	info, err := os.Stat(destination)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(destination); os.IsNotExist(err) {
 		return destination, nil
 	} else if err != nil {
 		return "", err
 	}
 
-	if info.IsDir() {
-		match := regexp.MustCompile(`\((\d+)\)$`).FindStringSubmatch(info.Name())
-		if len(match) > 1 {
-			number, _ := strconv.Atoi(match[1])
-			for {
-				number++
-				newDirName := fmt.Sprintf("%s(%d)", info.Name()[:len(info.Name())-len(match[0])], number)
-				newPath := filepath.Join(filepath.Dir(destination), newDirName)
-				if _, err := os.Stat(newPath); os.IsNotExist(err) {
-					return newPath, nil
-				}
-			}
-		} else {
-			for i := 1; ; i++ {
-				newDirName := fmt.Sprintf("%s(%d)", info.Name(), i)
-				newPath := filepath.Join(filepath.Dir(destination), newDirName)
-				if _, err := os.Stat(newPath); os.IsNotExist(err) {
-					return newPath, nil
-				}
-			}
-		}
-	} else {
-		baseName := filepath.Base(destination)
-		ext := filepath.Ext(baseName)
-		fileName := baseName[:len(baseName)-len(ext)]
-		match := regexp.MustCompile(`\((\d+)\)$`).FindStringSubmatch(fileName)
-		if len(match) > 1 {
-			number, _ := strconv.Atoi(match[1])
-			for {
-				number++
-				newFileName := fmt.Sprintf("%s(%d)%s", fileName[:len(fileName)-len(match[0])], number, ext)
-				newPath := filepath.Join(filepath.Dir(destination), newFileName)
-				if _, err := os.Stat(newPath); os.IsNotExist(err) {
-					return newPath, nil
-				}
-			}
-		} else {
-			for i := 1; ; i++ {
-				newFileName := fmt.Sprintf("%s(%d)%s", fileName, i, ext)
-				newPath := filepath.Join(filepath.Dir(destination), newFileName)
-				if _, err := os.Stat(newPath); os.IsNotExist(err) {
-					return newPath, nil
-				}
-			}
+	dir := filepath.Dir(destination)
+	base := filepath.Base(destination)
+	ext := filepath.Ext(base)
+	name := base[:len(base)-len(ext)]
+
+	// Extract base name without existing suffix
+	counter := 1
+	//nolint:mnd // 3 = full match + 2 capture groups
+	if match := suffixRegexp.FindStringSubmatch(name); len(match) == 3 {
+		name = match[1] // base name without (N)
+		if num, err := strconv.Atoi(match[2]); err == nil {
+			counter = num + 1 // start from next number
 		}
 	}
-}
 
-func pasteFile(src string, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		outPutLog("Paste file function open file error", err)
-	}
-	defer srcFile.Close()
-
-	dst, err = renameIfDuplicate(dst)
-	if err != nil {
-		outPutLog("Paste file function rename error", err)
-	}
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		outPutLog("Paste file function create file error", err)
-	}
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		outPutLog("Paste file function copy file error", err)
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (m *model) returnMetaData() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	cursor := panel.cursor
-	id := shortuuid.New()
-
-	message := channelMessage{
-		messageId:   id,
-		messageType: sendMetadata,
-		metadata:    m.fileMetaData.metaData,
-	}
-
-	// Obtaining metadata will take time. If metadata is obtained for every passing file, it will cause lag.
-	// Therefore, it is necessary to detect whether it is just browsing or stopping on that file or directory.
-	LastTimeCursorMove = [2]int{int(time.Now().UnixMicro()), cursor}
-	time.Sleep(150 * time.Millisecond)
-
-	if LastTimeCursorMove[1] != cursor && m.focusPanel != metadataFocus {
-		return
-	}
-
-	m.fileMetaData.metaData = m.fileMetaData.metaData[:0]
-	if len(panel.element) == 0 {
-		message.metadata = m.fileMetaData.metaData
-		channel <- message
-		return
-	}
-	if len(panel.element[panel.cursor].metaData) != 0 && m.focusPanel != metadataFocus {
-		m.fileMetaData.metaData = panel.element[panel.cursor].metaData
-		message.metadata = m.fileMetaData.metaData
-		channel <- message
-		return
-	}
-	filePath := panel.element[panel.cursor].location
-
-	fileInfo, err := os.Stat(filePath)
-
-	if isSymlink(filePath) {
-		if isBrokenSymlink(filePath) {
-			m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"Link file is broken!", ""})
-		} else {
-			m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"This is a link file.", ""})
+	// Find first available name
+	for i := counter; i < 10_000; i++ {
+		newName := fmt.Sprintf("%s(%d)%s", name, i, ext)
+		newPath := filepath.Join(dir, newName)
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			return newPath, nil
 		}
-		message.metadata = m.fileMetaData.metaData
-		channel <- message
-		return
-
 	}
 
-	if err != nil {
-		outPutLog("Return meta data function get file state error", err)
-	}
-
-	if fileInfo.IsDir() {
-		m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"FolderName", fileInfo.Name()})
-		if m.focusPanel == metadataFocus {
-			m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"FolderSize", formatFileSize(dirSize(filePath))})
-		}
-		m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"FolderModifyDate", fileInfo.ModTime().String()})
-		m.fileMetaData.metaData = append(m.fileMetaData.metaData, [2]string{"FolderPermissions", fileInfo.Mode().String()})
-		message.metadata = m.fileMetaData.metaData
-		channel <- message
-		return
-	}
-
-	checkIsSymlinked, err := os.Lstat(filePath)
-	if err != nil {
-		outPutLog("err when getting file info", err)
-		return
-	}
-
-	if Config.Metadata && checkIsSymlinked.Mode()&os.ModeSymlink == 0 {
-
-		fileInfos := et.ExtractMetadata(filePath)
-
-		for _, fileInfo := range fileInfos {
-			if fileInfo.Err != nil {
-				outPutLog("Return meta data function error", fileInfo, fileInfo.Err)
-				continue
-			}
-
-			for k, v := range fileInfo.Fields {
-				temp := [2]string{k, fmt.Sprintf("%v", v)}
-				m.fileMetaData.metaData = append(m.fileMetaData.metaData, temp)
-			}
-		}
-	} else {
-		fileName := [2]string{"FileName", fileInfo.Name()}
-		fileSize := [2]string{"FileSize", formatFileSize(fileInfo.Size())}
-		fileModifyData := [2]string{"FileModifyDate", fileInfo.ModTime().String()}
-		filePermissions := [2]string{"FilePermissions", fileInfo.Mode().String()}
-
-		if Config.EnableMD5Checksum {
-			// Calculate MD5 checksum
-			checksum, err := calculateMD5Checksum(filePath)
-			if err != nil {
-				outPutLog("Error calculating MD5 checksum", err)
-			} else {
-				md5Data := [2]string{"MD5Checksum", checksum}
-				m.fileMetaData.metaData = append(m.fileMetaData.metaData, md5Data)
-			}
-		}
-
-		m.fileMetaData.metaData = append(m.fileMetaData.metaData, fileName, fileSize, fileModifyData, filePermissions)
-	}
-
-	message.metadata = m.fileMetaData.metaData
-	channel <- message
-
-	panel.element[panel.cursor].metaData = m.fileMetaData.metaData
-}
-
-func calculateMD5Checksum(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to open file: %v", err)
-	}
-	defer file.Close()
-
-	hash := md5.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", fmt.Errorf("failed to calculate MD5 checksum: %v", err)
-	}
-
-	checksum := hex.EncodeToString(hash.Sum(nil))
-	return checksum, nil
-}
-
-// Get directory total size
-func dirSize(path string) int64 {
-	var size int64
-	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			outPutLog("Dir size function error", err)
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return err
-	})
-	return size
+	return "", fmt.Errorf("could not find free name for %s after many attempts", destination)
 }
 
 // Count how many file in the directory
 func countFiles(dirPath string) (int, error) {
 	count := 0
 
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(dirPath, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -424,102 +110,45 @@ func countFiles(dirPath string) (int, error) {
 	return count, err
 }
 
-// Check whether is broken recursive symlinks
-func isBrokenSymlink(filePath string) bool {
-	linkPath, err := os.Readlink(filePath)
-	if err != nil {
-		return true
-	}
+func countReadableFiles(dirPath string) (int, error) {
+	count := 0
 
-	absLinkPath, err := filepath.Abs(linkPath)
-	if err != nil {
-		return true
-	}
-
-	_, err = os.Stat(absLinkPath)
-	return err != nil
-}
-
-// Check whether is symlinks
-func isSymlink(filePath string) bool {
-
-	fileInfo, err := os.Lstat(filePath)
-	if err != nil {
-		return true
-	}
-
-	return fileInfo.Mode()&os.ModeSymlink != 0
-}
-
-func isImageFile(filename string) bool {
-	imageExtensions := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".gif":  true,
-		".bmp":  true,
-		".tiff": true,
-		".svg":  true,
-		".webp": true,
-		".ico":  true,
-	}
-
-	ext := strings.ToLower(filepath.Ext(filename))
-	return imageExtensions[ext]
-}
-
-func getElementIcon(file string, IsDir bool) icon.IconStyle {
-	ext := strings.TrimPrefix(filepath.Ext(file), ".")
-	name := file
-
-	if !Config.Nerdfont {
-		return icon.IconStyle{
-			Icon:  "",
-			Color: theme.FilePanelFG,
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-
-	if IsDir {
-		resultIcon := icon.Folders["folder"]
-		betterIcon, hasBetterIcon := icon.Folders[name]
-		if hasBetterIcon {
-			resultIcon = betterIcon
-		}
-		return resultIcon
-	} else {
-		// default icon for all files. try to find a better one though...
-		resultIcon := icon.Icons["file"]
-		// resolve aliased extensions
-		extKey := strings.ToLower(ext)
-		alias, hasAlias := icon.Aliases[extKey]
-		if hasAlias {
-			extKey = alias
-		}
-
-		// see if we can find a better icon based on extension alone
-		betterIcon, hasBetterIcon := icon.Icons[extKey]
-		if hasBetterIcon {
-			resultIcon = betterIcon
-		}
-
-		// now look for icons based on full names
-		fullName := name
-
-		fullName = strings.ToLower(fullName)
-		fullAlias, hasFullAlias := icon.Aliases[fullName]
-		if hasFullAlias {
-			fullName = fullAlias
-		}
-		bestIcon, hasBestIcon := icon.Icons[fullName]
-		if hasBestIcon {
-			resultIcon = bestIcon
-		}
-		if resultIcon.Color == "NONE" {
-			return icon.IconStyle{
-				Icon:  resultIcon.Icon,
-				Color: theme.FilePanelFG,
+		if !info.IsDir() {
+			if err = checkFileReadable(path); err != nil {
+				slog.Error("the file is not readable", "error", err)
+				return fmt.Errorf("the file is not readable: %s", err.Error())
 			}
+			count++
 		}
-		return resultIcon
+		return nil
+	})
+
+	return count, err
+}
+
+func processCmdToTeaCmd(cmd processbar.Cmd) tea.Cmd {
+	if cmd == nil {
+		// To prevent us from running cmd() on nil cmd
+		return nil
 	}
+	return func() tea.Msg {
+		updateMsg := cmd()
+		return ProcessBarUpdateMsg{
+			pMsg: updateMsg,
+			BaseMessage: BaseMessage{
+				reqID: updateMsg.GetReqID(),
+			},
+		}
+	}
+}
+
+func getCopyOrCutOperationName(cut bool) string {
+	if cut {
+		return "cut"
+	}
+	return "copy"
 }

@@ -1,39 +1,44 @@
 package internal
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"log/slog"
 
-func wheelMainAction(msg string, m model, cmd tea.Cmd) (model, tea.Cmd) {
+	"github.com/yorukot/superfile/src/internal/common"
+)
+
+func wheelMainAction(msg string, m *model) {
+	slog.Debug("wheelMainAction called", "msg", msg, "focusPanel", m.focusPanel)
+	var action func()
 	switch msg {
-
-	case "wheel up":
-		if m.focusPanel == sidebarFocus {
-			m.controlSideBarListUp(true)
-		} else if m.focusPanel == processBarFocus {
-			m.controlProcessbarListUp(true)
-		} else if m.focusPanel == metadataFocus {
-			m.controlMetadataListUp(true)
-		} else if m.focusPanel == nonePanelFocus {
-			m.controlFilePanelListUp(true)
-			m.fileMetaData.renderIndex = 0
-			go func() {
-				m.returnMetaData()
-			}()
+	case "wheelup":
+		switch m.focusPanel {
+		case sidebarFocus:
+			action = func() { m.sidebarModel.ListUp() }
+		case processBarFocus:
+			action = func() { m.processBarModel.ListUp() }
+		case metadataFocus:
+			action = func() { m.fileMetaData.ListUp() }
+		case nonePanelFocus:
+			action = func() { m.getFocusedFilePanel().ListUp() }
 		}
 
-	case "wheel down":
-		if m.focusPanel == sidebarFocus {
-			m.controlSideBarListDown(true)
-		} else if m.focusPanel == processBarFocus {
-			m.controlProcessbarListDown(true)
-		} else if m.focusPanel == metadataFocus {
-			m.controlMetadataListDown(true)
-		} else if m.focusPanel == nonePanelFocus {
-			m.controlFilePanelListDown(true)
-			m.fileMetaData.renderIndex = 0
-			go func() {
-				m.returnMetaData()
-			}()
+	case "wheeldown":
+		switch m.focusPanel {
+		case sidebarFocus:
+			action = func() { m.sidebarModel.ListDown() }
+		case processBarFocus:
+			action = func() { m.processBarModel.ListDown() }
+		case metadataFocus:
+			action = func() { m.fileMetaData.ListDown() }
+		case nonePanelFocus:
+			action = func() { m.getFocusedFilePanel().ListDown() }
 		}
+	default:
+		slog.Error("Unexpected type of mouse action in wheelMainAction", "msg", msg)
+		return
 	}
-	return m, cmd
+
+	for range common.WheelRunTime {
+		action()
+	}
 }

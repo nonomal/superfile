@@ -1,10 +1,16 @@
 package internal
 
 import (
+	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/yorukot/superfile/src/internal/ui/filepanel"
+	"github.com/yorukot/superfile/src/internal/ui/processbar"
+	"github.com/yorukot/superfile/src/pkg/utils"
 )
 
 // Cancel typing modal e.g. create file or directory
@@ -13,165 +19,158 @@ func (m *model) cancelTypingModal() {
 	m.typingModal.open = false
 }
 
-// Close warn modal
-func (m *model) cancelWarnModal() {
-	m.warnModal.open = false
-}
-
 // Confirm to create file or directory
-func (m *model) createItem() {
-	if !strings.HasSuffix(m.typingModal.textInput.Value(), "/") {
-		path := filepath.Join(m.typingModal.location, m.typingModal.textInput.Value())
+func createItem(location, item string) error {
+	if err := checkFileNameValidity(item); err != nil {
+		slog.Error("Errow while createItem during item creation", "error", err)
+		return err
+	}
+	path := filepath.Join(location, item)
+	if !strings.HasSuffix(item, string(filepath.Separator)) {
 		path, _ = renameIfDuplicate(path)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			outPutLog("Create item func (m *model)tion error", err)
+		if err := os.MkdirAll(filepath.Dir(path), utils.UserDirPerm); err != nil {
+			slog.Error("Error while createItem during directory creation", "error", err)
+			return err
 		}
 		f, err := os.Create(path)
 		if err != nil {
-			outPutLog("Create item func (m *model)tion create file error", err)
+			slog.Error("Error while createItem during file creation", "error", err)
+			return err
 		}
 		defer f.Close()
 	} else {
-		path := m.typingModal.location + "/" + m.typingModal.textInput.Value()
-		err := os.MkdirAll(path, 0755)
+		err := os.MkdirAll(path, utils.UserDirPerm)
 		if err != nil {
-			outPutLog("Create item func (m *model)tion create folder error", err)
+			slog.Error("Error while createItem during directory creation", "error", err)
+			return err
 		}
 	}
-	m.typingModal.open = false
-	m.typingModal.textInput.Blur()
+	return nil
+}
+
+func (m *model) getCreateCmd() tea.Cmd {
+	if !m.typingModal.open {
+		return nil
+	}
+
+	items := []string{m.typingModal.textInput.Value()}
+	location := m.typingModal.location
+
+	reqID := m.nextIoReqCnt()
+	slog.Debug("Submitting create request", "id", reqID, "items cnt", len(items))
+	m.cancelTypingModal()
+	return func() tea.Msg {
+		return m.createOperation(&m.processBarModel, location, items, reqID)
+	}
+}
+
+func (m *model) createOperation(
+	processBarModel *processbar.Model,
+	location string,
+	items []string,
+	reqID int,
+) tea.Msg {
+	if len(items) == 0 {
+		return NewCreateOperationMsg(processbar.Cancelled, reqID)
+	}
+	p, err := processBarModel.SendAddProcessMsg(filepath.Base(items[0]), processbar.OpCreate, len(items), true)
+	if err != nil {
+		slog.Error("Cannot spawn a new process", "error", err)
+		return NewCreateOperationMsg(processbar.Failed, reqID)
+	}
+	finalizer := func(state processbar.ProcessState, reqID int) tea.Msg {
+		return NewCreateOperationMsg(state, reqID)
+	}
+	processor := makeCreateProcessor(location, p, processBarModel)
+	msg := m.runFileProcessor(processor, finalizer, items, reqID)
+	return msg
+}
+
+func makeCreateProcessor(location string,
+	process processbar.Process,
+	processBarModel *processbar.Model) processbar.FileListProcessor {
+	processorFunction := func(items []string) (processbar.Process, []string) {
+		notProcessed := make([]string, 0)
+		if len(items) == 0 {
+			markProcessDone(process, processBarModel)
+			return process, notProcessed
+		}
+
+		for i, item := range items {
+			err := createItem(location, item)
+			if err != nil {
+				process.State = processbar.Failed
+				slog.Error("Error in create operation", "item", item, "error", err)
+				process.ErrorMsg = formatFileError(item, err)
+				notProcessed = items[i:]
+				break
+			}
+			process.CurrentFile = filepath.Base(item)
+			process.Done++
+			processBarModel.TrySendingUpdateProcessMsg(process)
+		}
+
+		if process.State != processbar.Failed {
+			process.State = processbar.Successful
+			markProcessDone(process, processBarModel)
+		}
+		return process, notProcessed
+	}
+	return processorFunction
 }
 
 // Cancel rename file or directory
-func (m *model) cancelReanem() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	panel.rename.Blur()
-	panel.renaming = false
-	m.fileModel.renaming = false
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+func (m *model) cancelRename() {
+	panel := m.getFocusedFilePanel()
+	panel.Rename.Blur()
+	panel.Renaming = false
+	m.fileModel.Renaming = false
 }
 
 // Connfirm rename file or directory
 func (m *model) confirmRename() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	oldPath := panel.element[panel.cursor].location
-	newPath := panel.location + "/" + panel.rename.Value()
+	panel := m.getFocusedFilePanel()
+
+	// Although we dont expect this to happen based on our current flow
+	// Just adding it here to be safe
+	if panel.Empty() {
+		slog.Error("confirmRename called on empty panel")
+		return
+	}
+
+	oldPath := panel.GetFocusedItem().Location
+	newPath := filepath.Join(panel.Location, panel.Rename.Value())
 
 	// Rename the file
 	err := os.Rename(oldPath, newPath)
 	if err != nil {
-		outPutLog("Confirm func (m *model)tion rename error", err)
+		slog.Error("Error while confirmRename during rename", "error", err)
+		// Dont return. We have to also reset the panel and model information
 	}
+	m.fileModel.Renaming = false
+	panel.Rename.Blur()
+	panel.Renaming = false
+}
 
-	m.fileModel.renaming = false
-	panel.rename.Blur()
-	panel.renaming = false
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+func (m *model) confirmSortOptions() {
+	panel := m.getFocusedFilePanel()
+	panel.SortKind = m.sortModal.GetSelectedKind()
+	m.sortModal.Close()
 }
 
 // Cancel search, this will clear all searchbar input
 func (m *model) cancelSearch() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	panel.searchBar.Blur()
-	panel.searchBar.SetValue("")
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	panel := m.getFocusedFilePanel()
+	panel.SearchBar.Blur()
+	panel.SearchBar.SetValue("")
 }
 
-// Confirm search
+// Confirm search. This will exit the search bar and filter the files
 func (m *model) confirmSearch() {
-	panel := m.fileModel.filePanels[m.filePanelFocusIndex]
-	panel.searchBar.Blur()
-	m.fileModel.filePanels[m.filePanelFocusIndex] = panel
+	panel := m.getFocusedFilePanel()
+	panel.SearchBar.Blur()
 }
 
-// Help menu panel list up
-func (m *model) helpMenuListUp() {
-	if m.helpMenu.cursor > 1 {
-		m.helpMenu.cursor--
-		if m.helpMenu.cursor < m.helpMenu.renderIndex {
-			m.helpMenu.renderIndex--
-			if m.helpMenu.data[m.helpMenu.cursor].subTitle != "" {
-				m.helpMenu.renderIndex--
-			}
-		}
-		if m.helpMenu.data[m.helpMenu.cursor].subTitle != "" {
-			m.helpMenu.cursor--
-		}
-	} else {
-		m.helpMenu.cursor = len(m.helpMenu.data) - 1
-		m.helpMenu.renderIndex = len(m.helpMenu.data) - m.helpMenu.height
-	}
-
-}
-
-// Help menu panel list down
-func (m *model) helpMenuListDown() {
-	if len(m.helpMenu.data) == 0 {
-		return
-	}
-
-	if m.helpMenu.cursor < len(m.helpMenu.data)-1 {
-		m.helpMenu.cursor++
-		if m.helpMenu.cursor > m.helpMenu.renderIndex+m.helpMenu.height-1 {
-			m.helpMenu.renderIndex++
-			if m.helpMenu.data[m.helpMenu.cursor].subTitle != "" {
-				m.helpMenu.renderIndex++
-			}
-		}
-		if m.helpMenu.data[m.helpMenu.cursor].subTitle != "" {
-			m.helpMenu.cursor++
-		}
-	} else {
-		m.helpMenu.cursor = 1
-		m.helpMenu.renderIndex = 0
-	}
-
-}
-
-// Toggle help menu
-func (m *model) openHelpMenu() {
-	if m.helpMenu.open {
-		m.helpMenu.open = false
-		return
-	}
-
-	m.helpMenu.open = true
-}
-
-// Quit help menu
-func (m *model) quitHelpMenu() {
-	m.helpMenu.open = false
-}
-
-// Command line
-func (m *model) openCommandLine() {
-	m.firstTextInput = true
-	footerHeight--
-	m.commandLine.input = generateCommandLineInputBox()
-	m.commandLine.input.Width = m.fullWidth - 3
-	m.commandLine.input.Focus()
-}
-
-func (m *model) closeCommandLine() {
-	footerHeight++
-	m.commandLine.input.SetValue("")
-	m.commandLine.input.Blur()
-}
-
-func (m *model) enterCommandLine() {
-	focusPanelDir := ""
-	for _, panel := range m.fileModel.filePanels {
-		if panel.focusType == focus {
-			focusPanelDir = panel.location
-		}
-	}
-	cd := "cd "+focusPanelDir+" && "
-	cmd := exec.Command("/bin/sh", "-c", cd + m.commandLine.input.Value())
-	_, err := cmd.CombinedOutput()
-	m.commandLine.input.SetValue("")
-	if err != nil {
-		return
-	}
-	m.commandLine.input.Blur()
-	footerHeight++
+func (m *model) getFocusedFilePanel() *filepanel.Model {
+	return m.fileModel.GetFocusedFilePanel()
 }

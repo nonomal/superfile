@@ -21,8 +21,23 @@ Write-Host -ForegroundColor DarkRed     "                    `$`$ |             
 Write-Host -ForegroundColor Red         "                    `$`$/                                                       "
 Write-Host ""
 
+function Get-LatestVersion {
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/yorukot/superfile/releases/latest" -TimeoutSec 5
+        $version = $release.tag_name -replace '^v', ''
+        if ([string]::IsNullOrEmpty($version)) {
+            Write-Host "Failed to parse version from GitHub API"
+            exit 1
+        }
+        return $version
+    } catch {
+        Write-Host "Failed to fetch latest version from GitHub API: $_"
+        exit 1
+    }
+}
+
 $package = "superfile"
-$version = "1.1.4"
+$version = if ($env:SPF_INSTALL_VERSION) { $env:SPF_INSTALL_VERSION } else { Get-LatestVersion }
 
 $installInstructions = @'
 This installer is only available for Windows.
@@ -64,15 +79,55 @@ The installer for system arch ($arch) is not available.
 }
 $filename = "$package-windows-v$version-$arch.zip"
 
-Write-Host "Downloading superfile..."
+$ProgressPreference = 'SilentlyContinue' #speeds up Download massively, but doesnt show Bits written
+
+Write-Host "Checking for superfile installation..."
 
 $superfileProgramPath = [Environment]::GetFolderPath("LocalApplicationData") + "\Programs\superfile"
+$superfileExePath = $superfileProgramPath + "\spf.exe"
+
 if (-not (Test-Path $superfileProgramPath)) {
     New-Item -Path $superfileProgramPath -ItemType Directory -Verbose:$false | Out-Null
 } else {
-    Write-Host "Folder $superfileProgramPath already exists. :/"
-    exit
+    if (Test-Path $superfileExePath) {
+        $versionOutput = & $superfileExePath --version
+        $versionOutput = $versionOutput.Replace('superfile version v', '')
+
+        $currentVersionParts = $version -split '\.' | ForEach-Object { [int]$_ }
+        $installedVersionParts = $versionOutput -split '\.' | ForEach-Object { [int]$_ }
+
+        # Compare versions part by part
+        $isUpToDate = $true
+        for ($i = 0; $i -lt $currentVersionParts.Count; $i++) {
+            if ($currentVersionParts[$i] -gt $installedVersionParts[$i]) {
+                $isUpToDate = $false
+                break
+            } elseif ($currentVersionParts[$i] -lt $installedVersionParts[$i]) {
+                continue
+            }
+        }
+        if ($isUpToDate) {
+            Write-Host "superfile already installed, quitting..."
+        } else {
+            Write-Host "Old version (superfile v$versionOutput) found, removing..."
+            try {
+                if (Test-Path $superfileExePath) {
+                    Remove-Item -Path $superfileExePath -Force
+                }
+            }
+            catch {
+                Write-Host "An error occurred: $_"
+                exit
+            }
+        }
+    } else {
+        Write-Host "superfile folder found but not executable :/, please check your %localappdata%\Programs\superfile for conflict."
+        exit
+    }
 }
+
+Write-Host "Downloading superfile...(Version v$version)"
+
 $url = "https://github.com/yorukot/superfile/releases/download/v$version/$filename"
 try {
     Invoke-WebRequest -OutFile "$superfileProgramPath/$filename" $url
@@ -109,5 +164,5 @@ Done!
 Restart you terminal, and for the love of Get-Command
 Take a look at tutorial :)
 
-https://superfile.netlify.app/getting-started/tutorial/
+https://superfile.dev/getting-started/tutorial/
 '@

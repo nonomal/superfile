@@ -1,161 +1,46 @@
 package internal
 
 import (
-	"archive/zip"
 	"fmt"
-	"io"
-	"os"
+	"log/slog"
 	"path/filepath"
-	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/lithammer/shortuuid"
-	"github.com/yorukot/superfile/src/config/icon"
 	"golift.io/xtractr"
+
+	"github.com/yorukot/superfile/src/pkg/utils"
+
+	"github.com/yorukot/superfile/src/internal/ui/processbar"
 )
 
-func extractCompressFile(src, dest string) error {
-	id := shortuuid.New()
-
-	prog := progress.New(generateGradientColor())
-	prog.PercentageStyle = footerStyle
-
-	p := process{
-		name:     icon.ExtractFile + icon.Space + "unzip file",
-		progress: prog,
-		state:    inOperation,
-		total:    1,
-		done:     0,
+func extractCompressFile(src, dest string, processBar *processbar.Model) error {
+	p, err := processBar.SendAddProcessMsg(filepath.Base(src), processbar.OpExtract, 1, true)
+	if err != nil {
+		return fmt.Errorf("cannot spawn process : %w", err)
 	}
-	message := 	channelMessage{
-		messageId:       id,
-		messageType: sendProcess,
-		processNewState: p,
-	}
-
-	channel <- message
 
 	x := &xtractr.XFile{
 		FilePath:  src,
 		OutputDir: dest,
+		FileMode:  utils.ExtractedFileMode,
+		DirMode:   utils.ExtractedDirMode,
 	}
 
-	_, _, _, err := xtractr.ExtractFile(x)
+	_, _, _, err = xtractr.ExtractFile(x)
 
 	if err != nil {
-		p.state = successful
-		message.processNewState = p
-		channel <- message
-		return err
+		p.State = processbar.Failed
+		slog.Error("Error extracting", "path", src, "error", err)
+	} else {
+		p.State = processbar.Successful
+		p.Done = 1
 	}
 
-	p.state = successful
-	p.done = 1
-
-	message.processNewState = p
-	channel <- message
-	
-	return nil
-}
-
-// Extract zip file
-func unzip(src, dest string) error {
-	id := shortuuid.New()
-	r, err := zip.OpenReader(src)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := r.Close(); err != nil {
-			panic(err)
-		}
-	}()
-	totalFiles := len(r.File)
-	// progressbar
-	prog := progress.New(generateGradientColor())
-	prog.PercentageStyle = footerStyle
-	// channel message
-	p := process{
-		name:     icon.ExtractFile + icon.Space + "unzip file",
-		progress: prog,
-		state:    inOperation,
-		total:    totalFiles,
-		done:     0,
+	p.DoneTime = time.Now()
+	pSendErr := processBar.SendUpdateProcessMsg(p, true)
+	if pSendErr != nil {
+		slog.Error("Error sending process update", "error", pSendErr)
 	}
 
-	message := channelMessage{
-		messageId: id,
-		messageType: sendProcess,
-		processNewState: p,
-	}
-
-	// Closure to address file descriptors issue with all the deferred .Close() methods
-	extractAndWriteFile := func(f *zip.File) error {
-
-		rc, err := f.Open()
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := rc.Close(); err != nil {
-				panic(err)
-			}
-		}()
-
-		path := filepath.Join(dest, f.Name)
-
-		// Check for ZipSlip (Directory traversal)
-		if !strings.HasPrefix(path, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", path)
-		}
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
-		} else {
-			os.MkdirAll(filepath.Dir(path), f.Mode())
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			if err != nil {
-				return fmt.Errorf("error open file: %s", err)
-			}
-			defer func() {
-				if err := f.Close(); err != nil {
-					panic(err)
-				}
-			}()
-
-			_, err = io.Copy(f, rc)
-
-			if err != nil {
-				return fmt.Errorf("error copy file: %s", err)
-			}
-		}
-		return nil
-	}
-
-	for _, f := range r.File {
-		p.name = icon.ExtractFile + icon.Space + f.Name
-		if len(channel) < 3 {
-			message.processNewState = p
-			channel <- message
-		}
-		err := extractAndWriteFile(f)
-		if err != nil {
-			p.state = failure
-			message.processNewState = p
-			channel <- message
-			return err
-		}
-		p.done++
-		if len(channel) < 3 {
-			message.processNewState = p
-			channel <- message
-		}
-	}
-
-	p.total = totalFiles
-	p.state = successful
-	message.processNewState = p
-	channel <- message
-
-	return nil
+	return err
 }
